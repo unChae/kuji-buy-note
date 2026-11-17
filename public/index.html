@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f6f3ed">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <title>치바쿠지 입고 상품 안내</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
@@ -13,7 +14,7 @@
   <body>
     <header class="site-header">
       <a class="brand" href="./" aria-label="치바쿠지 입고 상품 안내 홈">
-        <span class="brand-mark">K</span>
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><ellipse cx="7" cy="13" rx="3" ry="4" transform="rotate(-25 7 13)"/><ellipse cx="12" cy="6.5" rx="3" ry="4" transform="rotate(-10 12 6.5)"/><ellipse cx="21" cy="6.5" rx="3" ry="4" transform="rotate(10 21 6.5)"/><ellipse cx="26" cy="13" rx="3" ry="4" transform="rotate(25 26 13)"/><path d="M16 15c-3 0-4 3-6 5-3 4-1 8 3 7l3-1 3 1c4 1 6-3 3-7-2-2-3-5-6-5Z"/></svg></span>
         <span>치바쿠지 입고 안내</span>
       </a>
       <a class="admin-link" href="admin/">관리자 로그인</a>
@@ -21,22 +22,21 @@
 
     <main class="page-shell">
       <section class="intro">
-        <p class="eyebrow">치바쿠지 입고 안내</p>
-        <h1>치바쿠지에<br><span>입고될 상품 리스트</span></h1>
+        <h1>치바쿠지에<br><span>입고될 <em class="title-accent">상품 리스트</em></span></h1>
         <p class="intro-copy">앞으로 입고될 상품을 미리 확인해 보세요.</p>
       </section>
 
       <section class="list-section" aria-labelledby="list-title">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">입고 예정 상품</p>
-            <h2 id="list-title">치바쿠지 입고 상품 <span id="product-count" class="count-badge">0</span></h2>
+            <h2 id="list-title">입고 예정 상품 <span id="product-count" class="count-badge">0</span></h2>
           </div>
           <a class="text-link" href="admin/">관리자 페이지 <span aria-hidden="true">↗</span></a>
         </div>
         <p id="public-error" class="error-message" role="alert" hidden></p>
-        <div id="selected-products" class="product-grid"></div>
-        <div id="empty-state" class="empty-state">
+        <div id="public-loading" class="public-loading" role="status"><p class="card-loading"><span class="loading-dot" aria-hidden="true"></span>상품 목록을 불러오는 중…</p></div>
+        <div id="selected-products" class="arrival-months" aria-busy="true"></div>
+        <div id="empty-state" class="empty-state" hidden>
           <span class="empty-icon" aria-hidden="true">✳</span>
           <h3>등록된 입고 예정 상품이 없습니다</h3>
           <p>관리자가 상품을 등록하면 이곳에서 확인할 수 있습니다.</p>
@@ -44,6 +44,6 @@
       </section>
       <p class="source-note">상품 정보와 이미지는 <a href="https://1kuji.com/products" target="_blank" rel="noopener noreferrer">1kuji.com</a>에서 불러옵니다.</p>
     </main>
-    <footer class="site-footer">치바쿠지 입고 예정 상품 안내</footer>
+    <footer class="site-footer">도매 문의는 <a href="mailto:chibapick@gmail.com">chibapick@gmail.com</a>으로 부탁드립니다.</footer>
   </body>
 </html>

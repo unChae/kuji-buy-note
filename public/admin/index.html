@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f6f3ed">
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg">
     <title>상품 관리 · 치바쿠지 입고 안내</title>
     <link rel="stylesheet" href="../style.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
@@ -29,10 +30,13 @@
     </div>
     <header class="site-header">
       <a class="brand" href="../">
-        <span class="brand-mark">K</span>
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><ellipse cx="7" cy="13" rx="3" ry="4" transform="rotate(-25 7 13)"/><ellipse cx="12" cy="6.5" rx="3" ry="4" transform="rotate(-10 12 6.5)"/><ellipse cx="21" cy="6.5" rx="3" ry="4" transform="rotate(10 21 6.5)"/><ellipse cx="26" cy="13" rx="3" ry="4" transform="rotate(25 26 13)"/><path d="M16 15c-3 0-4 3-6 5-3 4-1 8 3 7l3-1 3 1c4 1 6-3 3-7-2-2-3-5-6-5Z"/></svg></span>
         <span>치바쿠지 입고 안내</span>
       </a>
-      <a class="admin-link" id="logout-link" href="../">사용자 페이지로 돌아가기</a>
+      <nav class="admin-navigation" aria-label="관리자 메뉴">
+        <a class="admin-link" href="../">사용자 페이지로 돌아가기</a>
+        <button class="admin-link logout-button" id="logout-link" type="button">로그아웃</button>
+      </nav>
     </header>
     <main class="page-shell admin-main">
       <div class="admin-title-row">
@@ -47,7 +51,8 @@
       <div id="admin-months">
         <p class="loading-message">상품 목록을 준비하고 있습니다…</p>
       </div>
-      <p class="source-note">상품명은 원문 그대로 표시됩니다. 상품 정보 출처: <a href="https://1kuji.com/products" target="_blank" rel="noopener noreferrer">1kuji.com</a></p>
+      <button class="button button-outline load-more-months" id="load-more-months" type="button" hidden>더 가져오기</button>
+      <p class="source-note">상품을 선택하면 제목 번역·수량·가격을 자동 수집합니다. 계산 결과 확인 후 등록하세요. 출처: <a href="https://1kuji.com/products" target="_blank" rel="noopener noreferrer">1kuji.com</a> · <a href="https://kujimap.com/1bankuji" target="_blank" rel="noopener noreferrer">쿠지맵</a></p>
     </main>
   </body>
 </html>
