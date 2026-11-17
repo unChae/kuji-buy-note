@@ -228,6 +228,21 @@ function renderCardDetails(state) {
       </div>`;
 }
 
+async function loadQuantitySnapshot() {
+  const bundledUrl = new URL("data/lot-quantities.json", scriptUrl).href;
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(window.location?.hostname);
+  const urls = !local && appConfig.quantitySnapshotUrl ? [appConfig.quantitySnapshotUrl, bundledUrl] : [bundledUrl];
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, { cache: "no-cache" });
+      if (!response.ok) continue;
+      const snapshot = await response.json();
+      if (Array.isArray(snapshot?.products)) return snapshot;
+    } catch { /* Keep the packaged catalogue available during data-host failures. */ }
+  }
+  return null;
+}
+
 function applyQuantitySnapshot(product, details, month, snapshot, now = Date.now()) {
   if (details.ticketsPerSet > 0) return details;
   const normalize = (value) => String(value).normalize("NFKC").replace(/\s+/g, "").toLowerCase();
@@ -261,8 +276,7 @@ async function collectCardProduct(state) {
       fetch(`${productsApiUrl}?${query}`, {
         headers: { apikey: appConfig.supabaseAnonKey, Authorization: `Bearer ${data.session.access_token}` }
       }),
-      fetch(new URL("data/lot-quantities.json", scriptUrl).href, { cache: "no-cache" })
-        .then((response) => response.ok ? response.json() : null).catch(() => null)
+      loadQuantitySnapshot()
     ]);
     let details = await response.json();
     if (!response.ok) throw new Error(details.error || "정보 조회 실패");

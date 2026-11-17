@@ -36,9 +36,17 @@ Google 공개 웹 엔드포인트는 공식 유료 API와 달리 안정성이 �
 광고 상태나 잠금 해제 토큰을 위조하지 않습니다. 사이트가 브라우저 접근을 거절하면 실패로 처리합니다.
 로컬은 설치된 Microsoft Edge를 자동 실행합니다. 상품별 고정 수량이나 수동 검증 예외는 사용하지 않습니다.
 
-GitHub Pages에서는 Node 서버가 실행되지 않으므로 배포 작업이 Chromium으로 원본 표를 수집해
-`public/data/lot-quantities.json`을 생성합니다. 페이지에서 이 자동 수집 결과를 사용하며 실제 원본 출처를 저장합니다.
-배포할 때와 하루 두 번(한국 시간 00시·12시) 현재 월부터 4개월을 수집합니다.
+화면 배포와 수량 수집은 별도 워크플로입니다.
+`Publish GitHub Pages`는 `public` 폴더만 배포하며 npm 설치나 브라우저 수집을 실행하지 않습니다.
+`Collect Product Quantities`는 하루 두 번(한국 시간 00시·12시), 수집 코드 변경 시 또는 수동 실행 시
+현재 월부터 4개월을 Chromium으로 수집합니다. 결과는 소스 코드와 분리된 `catalog-data` 브랜치의
+`lot-quantities.json`에 저장합니다. 실패 시 직전 결과를 유지하며 `main`이나 Pages 배포를 변경하지 않습니다.
+수집에는 저장소의 기본 `GITHUB_TOKEN`을 사용하며 별도 토큰 설정은 필요하지 않습니다.
+
+공개 페이지는 `public/config.js`의 `quantitySnapshotUrl`에서 갱신된 데이터를 직접 읽으므로
+수집 후 화면 재배포가 필요하지 않습니다. 이 URL은 공개 저장소의 데이터 브랜치를 가리킵니다.
+첫 수집 전이거나 데이터 주소에 연결할 수 없으면 배포에 포함된 `public/data/lot-quantities.json`을 사용합니다.
+로컬에서는 이 파일을 사용합니다.
 수집 결과는 공식 ID·원문 제목·발매 연월·출처 주소를 대조하고, 7일 이상 지난 결과는 적용하지 않습니다.
 GitHub Actions의 실제 실행 결과는 저장소 Actions 탭에서 확인할 수 있습니다.
 
@@ -53,7 +61,7 @@ Linux에서는 `npx playwright install --with-deps chromium` 후 Xvfb 환경에�
 수량이나 가격이 아직 공개되지 않았거나 수집이 실패하면 등록 버튼을 비활성화하고 **다시 수집**을 제공합니다.
 기존 JSON 상품 필드를 확장하므로 데이터베이스 스키마 변경은 필요하지 않습니다.
 
-검증: Node.js 24 이상에서 `node --test tests/products.test.cjs`를 실행합니다.
+검증: Node.js 24 이상에서 `node --test tests/*.test.cjs`를 실행합니다.
 
 GitHub Pages에서 정적 화면을 제공하고, Supabase에서 관리자 인증과 공용 상품 목록을 관리합니다. 상품 정보는 Supabase Edge Function이 1kuji.com에서 가져옵니다.
 

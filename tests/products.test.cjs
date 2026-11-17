@@ -39,6 +39,32 @@ test('public arrivals group chronologically across years and highlight lot and p
   assert.equal(elements.get('#empty-state').hidden, false);
 });
 
+test('published page reads data independently and falls back to its bundled file', async () => {
+  const remote = 'https://raw.githubusercontent.com/example/kuji/catalog-data/lot-quantities.json';
+  const bundled = 'https://app.example/kuji/data/lot-quantities.json';
+  const requests = [];
+  let remoteFails = true;
+  const context = vm.createContext({ URL, window: {
+    APP_CONFIG: { quantitySnapshotUrl: remote }, location: { hostname: 'app.example' }
+  }, document: { querySelector: () => ({ src: 'https://app.example/kuji/app.js' }) },
+  fetch: async (url) => {
+    requests.push(url);
+    if (url === remote && remoteFails) return new Response('', { status: 503 });
+    return Response.json({ products: [], source: url });
+  } });
+  vm.runInContext(fs.readFileSync('public/app.js', 'utf8').split('const adminView =')[0], context);
+  assert.equal((await vm.runInContext('loadQuantitySnapshot()', context)).source, bundled);
+  assert.deepEqual(requests, [remote, bundled]);
+  requests.length = 0;
+  remoteFails = false;
+  assert.equal((await vm.runInContext('loadQuantitySnapshot()', context)).source, remote);
+  assert.deepEqual(requests, [remote]);
+  requests.length = 0;
+  context.window.location.hostname = 'localhost';
+  await vm.runInContext('loadQuantitySnapshot()', context);
+  assert.deepEqual(requests, [bundled]);
+});
+
 test('Pages uses recent browser-collected quantities only for the exact product and month', () => {
   const context = vm.createContext({ URL, window: { APP_CONFIG: {} }, document: {
     querySelector: () => ({ src: 'https://app.example/buy-note/app.js' })
