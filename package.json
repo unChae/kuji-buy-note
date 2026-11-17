@@ -1,0 +1,9 @@
+{
+  "name": "kuji-buy-note",
+  "version": "1.0.0",
+  "private": true,
+  "description": "1kuji.com 상품 선택 및 표시 웹앱",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f6f3ed">
+    <title>상품 관리 · 치바쿠지 입고 안내</title>
+    <link rel="stylesheet" href="../style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+    <script src="../config.js" defer></script>
+    <script src="../app.js" defer></script>
+  </head>
+  <body>
+    <div class="auth-backdrop" id="admin-auth" hidden>
+      <form class="auth-dialog" id="admin-auth-form" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+        <p class="eyebrow">관리자 로그인</p>
+        <h1 id="auth-title">관리자 계정으로 로그인</h1>
+        <p>등록된 관리자 이메일과 비밀번호를 입력해 주세요.</p>
+        <label class="sr-only" for="admin-email">이메일</label>
+        <input id="admin-email" type="email" autocomplete="username" placeholder="이메일" required>
+        <label class="sr-only" for="admin-password">비밀번호</label>
+        <input id="admin-password" type="password" autocomplete="current-password" placeholder="비밀번호" required>
+        <p class="auth-error" id="auth-error" role="alert" hidden>비밀번호가 올바르지 않습니다.</p>
+        <div class="auth-actions">
+          <a class="button button-outline" href="../">돌아가기</a>
+          <button class="button button-dark" type="submit">확인</button>
+        </div>
+      </form>
+    </div>
+    <header class="site-header">
+      <a class="brand" href="../">
+        <span class="brand-mark">K</span>
+        <span>치바쿠지 입고 안내</span>
+      </a>
+      <a class="admin-link" id="logout-link" href="../">사용자 페이지로 돌아가기</a>
+    </header>
+    <main class="page-shell admin-main">
+      <div class="admin-title-row">
+        <div>
+          <p class="eyebrow">상품 관리</p>
+          <h1>입고 예정 상품 관리</h1>
+          <p class="intro-copy" id="month-range"></p>
+        </div>
+        <span class="selection-status" id="selection-status" role="status"></span>
+      </div>
+      <p class="error-message admin-error" id="admin-error" role="alert" hidden></p>
+      <div id="admin-months">
+        <p class="loading-message">상품 목록을 준비하고 있습니다…</p>
+      </div>
+      <p class="source-note">상품명은 원문 그대로 표시됩니다. 상품 정보 출처: <a href="https://1kuji.com/products" target="_blank" rel="noopener noreferrer">1kuji.com</a></p>
+    </main>
+  </body>
+</html>
