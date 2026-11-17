@@ -29,18 +29,19 @@ function productCard(product) {
     ? `<span class="product-date"><span class="product-release-label">발매</span>${escapeHtml(product.releaseDate)}</span>`
     : "";
   return `
-    <article class="product-card">
+    <article class="product-card${product.isIncoming === false ? " is-not-incoming" : ""}">
       <a class="product-image" href="${escapeHtml(product.url)}" target="_blank" rel="noopener noreferrer">
         <img src="${escapeHtml(product.image)}" alt="" loading="lazy">
       </a>
       <div class="product-info">
         ${release}
         <a class="product-name" href="${escapeHtml(product.url)}" title="${escapeHtml(product.nameKo || product.name)}" target="_blank" rel="noopener noreferrer">${escapeHtml(product.nameKo || product.name)}</a>
+        <p class="product-retailers"><span>판매처</span> ${escapeHtml(product.retailersKo || product.retailers || "미확인")}</p>
       </div>
       <dl class="product-summary">
-        <div class="product-lot"><dt>1세트 장수</dt><dd>${Number(product.ticketsPerSet) > 0 ? `${Number(product.ticketsPerSet).toLocaleString("ko-KR")}<span>장</span>` : "확인 중"}</dd></div>
-        <div class="product-unit-price"><dt>장당 가격</dt><dd>${Number(product.unitPriceYen) > 0 ? `${Number(product.unitPriceYen).toLocaleString("ko-KR")}<span>엔</span>` : "확인 중"}</dd></div>
-        <div class="product-price"><dt>세트 매입가</dt><dd>${Number(product.purchasePriceYen) > 0 ? `${Number(product.purchasePriceYen).toLocaleString("ko-KR")}<span>엔</span>` : "확인 중"}</dd></div>
+        <div class="product-lot"><dt>1세트 장수</dt><dd>${Number(product.ticketsPerSet) > 0 ? `${Number(product.ticketsPerSet).toLocaleString("ko-KR")}<span>장</span>` : "미확인"}</dd></div>
+        <div class="product-unit-price"><dt>장당 가격</dt><dd>${Number(product.unitPriceYen) > 0 ? `${Number(product.unitPriceYen).toLocaleString("ko-KR")}<span>엔</span>` : "미확인"}</dd></div>
+        <div class="product-price"><dt>세트 매입가</dt><dd>${Number(product.purchasePriceYen) > 0 ? `${Number(product.purchasePriceYen).toLocaleString("ko-KR")}<span>엔</span>` : "미확인"}</dd></div>
         <div class="product-source-links"><dt class="sr-only">정보 출처</dt><dd>${quantitySourceUrl ? `<a href="${escapeHtml(quantitySourceUrl)}" target="_blank" rel="noopener noreferrer">수량 출처 ↗</a>` : ""}${officialPriceUrl ? `<a href="${escapeHtml(officialPriceUrl)}" target="_blank" rel="noopener noreferrer">공식 가격 ↗</a>` : ""}</dd></div>
       </dl>
     </article>`;
@@ -98,40 +99,113 @@ function renderPublicSkeleton() {
 
 let publicProductsLoaded = false;
 let publicProductsLoading = false;
+let publicView = "incoming";
+let publicRegisteredProducts = [];
+let publicCatalogProducts = null;
+let publicCatalogSnapshot = null;
+let publicCatalogLoading = false;
+let publicCatalogMonthCount = 0;
+let publicCatalogStart = null;
+let publicLoadError = "";
+let publicCatalogError = "";
+
+function mergePublicCatalog(catalog, registered, snapshot) {
+  const merged = new Map();
+  for (const product of catalog) {
+    const details = applyQuantitySnapshot(product, product, { year: product.catalogYear, month: product.catalogMonth }, snapshot);
+    merged.set(product.id, { ...details, isIncoming: false });
+  }
+  for (const product of registered) merged.set(product.id, { ...merged.get(product.id), ...product, isIncoming: true });
+  return [...merged.values()];
+}
+
+function renderPublicProductList() {
+  const all = publicView === "all";
+  const waiting = (!publicProductsLoaded && publicProductsLoading) || (all && publicCatalogLoading && !publicCatalogProducts);
+  const loading = $("#public-loading");
+  loading.hidden = !waiting;
+  $("#selected-products").hidden = waiting;
+  $("#selected-products").setAttribute("aria-busy", String(waiting));
+  if (waiting) {
+    loading.innerHTML = renderPublicSkeleton();
+    $("#empty-state").hidden = true;
+  } else if (publicProductsLoaded && (!all || publicCatalogProducts)) {
+    renderSelectedProducts(all ? mergePublicCatalog(publicCatalogProducts, publicRegisteredProducts, publicCatalogSnapshot) : publicRegisteredProducts);
+  } else {
+    $("#empty-state").hidden = true;
+    $("#selected-products").innerHTML = "";
+    $("#product-count").textContent = "0";
+  }
+  setPublicError(all ? publicCatalogError || publicLoadError : publicLoadError);
+  const title = $("#list-title-text");
+  if (title) title.textContent = all ? "전체 쿠지 상품" : "입고 예정 상품";
+  const emptyTitle = $("#public-empty-title");
+  const emptyCopy = $("#public-empty-copy");
+  if (emptyTitle) emptyTitle.textContent = all ? "이 기간에 공개된 쿠지 상품이 없습니다" : "등록된 입고 예정 상품이 없습니다";
+  if (emptyCopy) emptyCopy.textContent = all ? "이번 달과 다음 달의 상품이 공개되면 이곳에서 확인할 수 있습니다." : "관리자가 상품을 등록하면 이곳에서 확인할 수 있습니다.";
+  const range = $("#public-catalog-range");
+  if (range) {
+    range.hidden = !all;
+    const months = publicCatalogStart && publicCatalogMonthCount ? getTargetMonths(0, publicCatalogMonthCount, publicCatalogStart) : [];
+    range.textContent = months.length ? `${formatMonth(months[0])} – ${formatMonth(months[months.length - 1])} · 발매일순` : "이번 달 이후 공개된 쿠지 상품을 불러옵니다.";
+  }
+}
+
+async function loadPublicCatalog() {
+  if (publicCatalogLoading || publicCatalogProducts) return;
+  publicCatalogLoading = true;
+  publicCatalogError = "";
+  if (!publicCatalogStart) {
+    const parts = new Intl.DateTimeFormat("en", { timeZone: "Asia/Seoul", year: "numeric", month: "numeric" }).formatToParts(new Date());
+    publicCatalogStart = new Date(Number(parts.find((part) => part.type === "year").value), Number(parts.find((part) => part.type === "month").value) - 1, 1);
+  }
+  const months = getTargetMonths(0, 2, publicCatalogStart);
+  renderPublicProductList();
+  try {
+    const [results, snapshot] = await Promise.all([Promise.all(months.map(fetchProducts)), loadQuantitySnapshot()]);
+    const products = results.flatMap((result) => result.products.map((product) => ({ ...product, catalogYear: result.year, catalogMonth: result.month })));
+    publicCatalogProducts = products;
+    publicCatalogSnapshot = snapshot || publicCatalogSnapshot;
+    publicCatalogMonthCount = months.length;
+  } catch (error) {
+    publicCatalogError = `전체 상품을 불러오지 못했습니다: ${error.message} 전체 보기를 눌러 다시 시도해 주세요.`;
+  } finally {
+    publicCatalogLoading = false;
+    renderPublicProductList();
+  }
+}
+
+async function setPublicView(view) {
+  if (view !== "incoming" && view !== "all") return;
+  publicView = view;
+  document.querySelectorAll("[data-public-view]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.publicView === view)));
+  if (view === "all" && !publicCatalogProducts) await loadPublicCatalog();
+  else renderPublicProductList();
+}
 
 async function loadPublicProducts() {
   if (publicProductsLoading) return;
-  const loading = $("#public-loading");
   if (!supabaseClient) {
-    loading.hidden = true;
-    $("#selected-products").setAttribute("aria-busy", "false");
-    setPublicError("공용 상품 목록을 불러오려면 Supabase 설정이 필요합니다.");
-    $("#empty-state").hidden = true;
+    publicLoadError = "공용 상품 목록을 불러오려면 Supabase 설정이 필요합니다.";
+    renderPublicProductList();
     return;
   }
   publicProductsLoading = true;
-  if (!publicProductsLoaded) {
-    loading.innerHTML = renderPublicSkeleton();
-    loading.hidden = false;
-    $("#empty-state").hidden = true;
-    $("#selected-products").setAttribute("aria-busy", "true");
-  }
+  renderPublicProductList();
   try {
     const { data, error } = await supabaseClient
       .from("display_products")
       .select("id, product");
     if (error) throw error;
 
-    setPublicError("");
-    renderSelectedProducts(data.map((row) => row.product));
+    publicLoadError = "";
+    publicRegisteredProducts = data.map((row) => row.product);
     publicProductsLoaded = true;
   } catch (error) {
-    setPublicError(`상품 목록을 불러오지 못했습니다: ${error.message}`);
-    $("#empty-state").hidden = true;
+    publicLoadError = `상품 목록을 불러오지 못했습니다: ${error.message}`;
   } finally {
     publicProductsLoading = false;
-    loading.hidden = true;
-    $("#selected-products").setAttribute("aria-busy", "false");
+    renderPublicProductList();
   }
 }
 
@@ -147,6 +221,8 @@ function formatMonth({ year, month }) {
 }
 
 async function fetchProducts(month) {
+  const cached = await loadCachedProducts(month);
+  if (cached.length) return { ...month, products: cached };
   const query = new URLSearchParams(month);
   const response = await fetch(`${productsApiUrl}?${query}`, {
     headers: {
@@ -157,6 +233,20 @@ async function fetchProducts(month) {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "상품 목록을 불러오지 못했습니다.");
   return payload;
+}
+
+async function loadCachedProducts(month) {
+  if (!appConfig.supabaseUrl) return [];
+  try {
+    const query = new URLSearchParams({ select: "product", catalog_year: `eq.${month.year}`, catalog_month: `eq.${month.month}` });
+    const response = await fetch(`${appConfig.supabaseUrl}/rest/v1/catalog_products?${query}`, {
+      headers: { apikey: appConfig.supabaseAnonKey, Authorization: `Bearer ${appConfig.supabaseAnonKey}` },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!response.ok) return [];
+    const rows = await response.json();
+    return Array.isArray(rows) ? rows.map((row) => row.product).filter((product) => product?.id) : [];
+  } catch { return []; }
 }
 
 function updateSelectionStatus(message) {
@@ -334,6 +424,9 @@ async function collectCardProduct(state) {
       } catch { /* Retain the server warning if both independent attempts fail. */ }
     }
     state.draft = normalizeProduct({ ...state.product, ...details });
+    const cached = await supabaseClient.from("catalog_products").upsert({ id: state.product.id,
+      catalog_year: state.month.year, catalog_month: state.month.month, product: state.draft, updated_at: new Date().toISOString() });
+    if (cached.error) details.warnings = [...(details.warnings || []), "조회 정보 캐시 저장에 실패했습니다."];
     state.message = (details.warnings || []).join(" ") || (isCompleteProduct(state.draft) ? "조회 완료 · 확인 후 등록하세요." : "");
   } catch (error) {
     state.message = `${error.message} 다시 조회해 주세요.`;
@@ -431,7 +524,7 @@ async function loadAdminProducts(append = false) {
     batch.querySelectorAll("[data-product-id]").forEach((card) => {
       const result = results.find((result) => result.products.some((product) => product.id === card.dataset.productId));
       const product = result.products.find((product) => product.id === card.dataset.productId);
-      const state = { card, product, month: { year: result.year, month: result.month }, draft: selectedProducts.get(product.id) || null, loading: false, saving: false, message: "" };
+      const state = { card, product, month: { year: result.year, month: result.month }, draft: selectedProducts.get(product.id) || (product.checkedAt ? normalizeProduct(product) : null), loading: false, saving: false, message: "" };
       cardStates.set(product.id, state);
       renderCardDetails(state);
       card.addEventListener("click", (event) => {
@@ -541,6 +634,10 @@ if (adminView) {
       });
   }
 } else {
+  $("#public-view-switch")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-public-view]");
+    if (button) setPublicView(button.dataset.publicView);
+  });
   loadPublicProducts();
   window.setInterval(() => {
     if (document.visibilityState === "visible") loadPublicProducts();

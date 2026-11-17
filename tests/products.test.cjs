@@ -29,7 +29,7 @@ test('public arrivals group chronologically across years and highlight lot and p
   assert.match(html, /1세트 장수/);
   assert.match(html, /56,880<span>엔/);
   assert.match(html, /72<span>장/);
-  assert.match(html, /확인 중/);
+  assert.match(html, /미확인/);
   assert.equal(elements.get('#product-count').textContent, 2);
   vm.runInContext('renderSelectedProducts(products, new Date("2026-12-31T16:00:00Z"))', context);
   assert.equal(elements.get('#product-count').textContent, 1);
@@ -301,13 +301,14 @@ test('cards collect independently and only publish or remove on explicit action'
     return elements.get(selector);
   }
   const writes = [];
+  const catalogWrites = [];
   let failSave = false;
   const context = vm.createContext({
     URL, URLSearchParams, AbortSignal, console,
     window: { APP_CONFIG: { supabaseUrl: 'https://db.example', supabaseAnonKey: 'anon' }, supabase: { createClient: () => ({
       auth: { getSession: async () => ({ data: { session: { access_token: 'token' } } }) },
-      from: () => ({
-        upsert: async (row) => { if (failSave) return { error: new Error('save failed') }; writes.push(row); return {}; },
+      from: (table) => ({
+        upsert: async (row) => { if (failSave) return { error: new Error('save failed') }; (table === 'catalog_products' ? catalogWrites : writes).push(row); return {}; },
         delete: () => ({ eq: async (key, id) => { writes.push({ removed: id }); return {}; } })
       })
     }) } },
@@ -329,6 +330,8 @@ test('cards collect independently and only publish or remove on explicit action'
   assert.equal(context.first.loading, true);
   await Promise.all([firstRequest, secondRequest]);
   assert.equal(writes.length, 0);
+  assert.equal(catalogWrites.length, 2);
+  assert.equal(catalogWrites[0].catalog_month, 11);
   assert.match(element('test.card-details').innerHTML, /63,200엔/);
   assert.match(element('other.card-details').innerHTML, /55,300엔/);
   assert.equal(element('test.registration-toggle').attributes['aria-pressed'], 'false');

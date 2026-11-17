@@ -119,3 +119,18 @@ npm start
 그다음 `http://localhost:3000`을 엽니다.
 로컬은 `/api/products`에서 현재 Edge Function 소스를 직접 실행하므로 함수 재배포 없이 수집기 변경이 적용됩니다.
 수집기 소스를 수정하면 Node 서버를 다시 시작하세요. GitHub Pages에서는 배포된 Edge Function을 사용합니다.
+
+## 전체 상품 정보 일괄 저장
+
+`supabase/migrations/202611180001_product_catalog.sql`을 적용하면 수집한 전체 상품은
+`catalog_products`에 저장하고, 입고 예정으로 등록한 상품은 기존 `display_products`에 따로 보관합니다.
+공개 목록과 관리자 목록 모두 월별 DB 캐시를 우선 읽습니다. 조회/수집만으로 입고 예정에 등록되지 않습니다.
+
+```text
+node scripts/collect-catalog.cjs --save
+```
+
+로그인된 Supabase CLI로 이번 달·다음 달의 번역 제목, 판매처, 장당 가격, 확인된 세트 장수와 출처를 저장합니다.
+장수는 기존 브라우저 수집 JSON을 재사용하고, 없는 항목은 실제 출처에서 추가 조회합니다.
+출처에서 확인되지 않은 값은 추측하지 않습니다. `--save` 없이 실행하면 `supabase/.temp/`에 결과만 저장합니다.
+새 상품이나 변경된 정보를 반영하려면 다시 실행하세요. 기존 JSON 수량 수집 작업과 별개입니다.
