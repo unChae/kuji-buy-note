@@ -173,14 +173,39 @@ function showAdminError(message) {
 
 const cardStates = new Map();
 
+function normalizeProduct(product) {
+  const integer = (value) => {
+    if (typeof value === "string") {
+      const text = value.trim();
+      if (!/^\d+(?:,\d{3})*$/.test(text)) return null;
+      value = Number(text.replace(/,/g, ""));
+    }
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  };
+  const ticketsPerSet = integer(product.ticketsPerSet);
+  const unitPriceYen = integer(product.unitPriceYen);
+  const total = ticketsPerSet && unitPriceYen ? ticketsPerSet * unitPriceYen : null;
+  return { ...product, nameKo: typeof product.nameKo === "string" ? product.nameKo.trim() : "",
+    ticketsPerSet, unitPriceYen, purchasePriceYen: Number.isSafeInteger(total) ? total : null };
+}
+
+function registrationIssue(product) {
+  if (!product) return "상품 정보를 먼저 조회해 주세요.";
+  const normalized = normalizeProduct(product);
+  const missing = [];
+  if (!normalized.nameKo) missing.push("번역 제목");
+  if (!normalized.ticketsPerSet) missing.push("세트 장수");
+  if (!normalized.unitPriceYen) missing.push("장당 가격");
+  if (missing.length) return `${missing.join(" · ")} 정보가 없어 등록할 수 없습니다. 다시 조회해 주세요.`;
+  return normalized.purchasePriceYen ? "" : "매입가를 계산할 수 없습니다. 다시 조회해 주세요.";
+}
+
 function isCompleteProduct(product) {
-  return Boolean(product && /[가-힣]/.test(product.nameKo || "") &&
-    Number.isSafeInteger(product.ticketsPerSet) && product.ticketsPerSet > 0 &&
-    Number.isSafeInteger(product.unitPriceYen) && product.unitPriceYen > 0);
+  return !registrationIssue(product);
 }
 
 async function saveProductSelection(product, isSelected) {
-  const savedProduct = { ...product, quantitySourceUrl: product.quantitySourceUrl || product.kujimapUrl || "", officialPriceUrl: product.officialPriceUrl || product.url };
+  const savedProduct = { ...normalizeProduct(product), quantitySourceUrl: product.quantitySourceUrl || product.kujimapUrl || "", officialPriceUrl: product.officialPriceUrl || product.url };
   showAdminError("");
   try {
     const result = isSelected
@@ -199,7 +224,10 @@ async function saveProductSelection(product, isSelected) {
 
 function renderCardDetails(state) {
   const registered = selectedProducts.has(state.product.id);
+  if (state.draft) state.draft = normalizeProduct(state.draft);
   const product = state.draft;
+  const issue = product ? registrationIssue(product) : "";
+  const message = issue ? [state.message, issue].filter(Boolean).join(" ") : state.message;
   const busy = state.loading || state.saving;
   state.card.classList.toggle("has-details", Boolean(state.loading || product || state.message));
   state.card.setAttribute("aria-busy", String(busy));
@@ -221,10 +249,10 @@ function renderCardDetails(state) {
           <div class="card-total"><dt>매입가</dt><dd>${product.purchasePriceYen ? Number(product.purchasePriceYen).toLocaleString("ko-KR") + "엔" : "미확인"}</dd></div>
         </dl>
         <p class="card-sources">${product.quantitySourceUrl || product.kujimapUrl ? `<a href="${escapeHtml(product.quantitySourceUrl || product.kujimapUrl)}" target="_blank" rel="noopener noreferrer">수량 출처 ↗</a> · ` : ""}<a href="${escapeHtml(state.product.url)}" target="_blank" rel="noopener noreferrer">공식 가격 ↗</a></p>` : ""}
-      ${state.message ? `<p class="card-status" role="status">${escapeHtml(state.message)}</p>` : ""}
+      ${message ? `<p class="card-status" role="status">${escapeHtml(message)}</p>` : ""}
       <div class="card-actions">
         <button class="button button-outline" type="button" data-action="collect" ${busy ? "disabled" : ""}>${product || state.message ? "다시 조회" : "조회"}</button>
-        ${product ? `<button class="button button-dark" type="button" data-action="publish" ${busy || !isCompleteProduct(product) ? "disabled" : ""}>${state.saving ? "저장 중…" : registered ? "수정 등록" : "등록하기"}</button>` : ""}
+        ${product ? `<button class="button button-dark" type="button" data-action="publish" ${busy || issue ? "disabled" : ""} ${issue ? `title="${escapeHtml(issue)}"` : ""}>${state.saving ? "저장 중…" : issue ? "정보 확인 필요" : registered ? "수정 등록" : "등록하기"}</button>` : ""}
       </div>`;
 }
 
@@ -281,8 +309,8 @@ async function collectCardProduct(state) {
     let details = await response.json();
     if (!response.ok) throw new Error(details.error || "정보 조회 실패");
     details = applyQuantitySnapshot(state.product, details, state.month, snapshot);
-    state.draft = { ...state.product, ...details, purchasePriceYen: details.ticketsPerSet && details.unitPriceYen ? details.ticketsPerSet * details.unitPriceYen : null };
-    state.message = (details.warnings || []).join(" ") || "조회 완료 · 확인 후 등록하세요.";
+    state.draft = normalizeProduct({ ...state.product, ...details });
+    state.message = (details.warnings || []).join(" ") || (isCompleteProduct(state.draft) ? "조회 완료 · 확인 후 등록하세요." : "");
   } catch (error) {
     state.message = `${error.message} 다시 조회해 주세요.`;
   } finally {

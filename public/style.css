@@ -141,7 +141,7 @@ article.admin-product-card:focus-within { border-color: var(--accent); box-shado
 .registration-toggle svg { display: block; width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 .registration-toggle:disabled { opacity: 1; cursor: default; }
 .registration-toggle.is-registered { border-color: var(--accent); color: white; background: var(--accent); }
-.registration-toggle.is-registered:disabled { opacity: .55; cursor: wait; }
+.registration-toggle.is-registered:disabled { opacity: .55; cursor: not-allowed; }
 .card-details { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 8px 10px; border-top: 1px solid var(--line); }
 .card-numbers { flex-shrink: 0; margin: 0; font-size: 12px; }
 .card-numbers > div { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
@@ -182,7 +182,8 @@ article.admin-product-card:focus-within { border-color: var(--accent); box-shado
 .auth-error[hidden] { display: none; }
 .auth-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; clip-path: inset(50%); }
-button:disabled { opacity: .55; cursor: wait; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+.admin-product-card[aria-busy="true"] button:disabled { cursor: progress; }
 @media (max-width: 800px) {
   .product-grid { grid-template-columns: 1fr; }
   .product-card { grid-template-columns: 92px minmax(0, 1fr); min-height: 0; }

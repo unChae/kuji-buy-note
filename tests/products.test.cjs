@@ -309,4 +309,20 @@ test('cards collect independently and only publish or remove on explicit action'
   context.second.draft.ticketsPerSet = null;
   await vm.runInContext('persistCardProduct(second, true)', context);
   assert.equal(writes.length, 2);
+  // Values may be returned as formatted strings, and translated brand names
+  // can remain Latin text. A fully populated card must still be publishable.
+  context.first.draft = { ...context.first.product, nameKo: 'hololive FLOW GLOW', ticketsPerSet: '80', unitPriceYen: '790' };
+  failSave = false;
+  vm.runInContext('renderCardDetails(first)', context);
+  const button = element('test.card-details').innerHTML.match(/<button[^>]*data-action="publish"[^>]*>/)[0];
+  assert.doesNotMatch(button, /disabled/);
+  await vm.runInContext('persistCardProduct(first, true)', context);
+  assert.equal(writes[2].product.ticketsPerSet, 80);
+  assert.equal(writes[2].product.unitPriceYen, 790);
+  assert.equal(writes[2].product.purchasePriceYen, 63200);
+  context.first.draft.nameKo = '';
+  vm.runInContext('renderCardDetails(first)', context);
+  assert.match(element('test.card-details').innerHTML, /번역 제목 정보가 없어/);
+  assert.match(element('test.card-details').innerHTML, /정보 확인 필요/);
+  assert.doesNotMatch(element('test.card-details').innerHTML, /card-loading/);
 });
