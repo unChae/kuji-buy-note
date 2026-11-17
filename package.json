@@ -5,5 +5,8 @@
   "description": "1kuji.com 상품 선택 및 표시 웹앱",
   "scripts": {
     "start": "node server.js"
+  },
+  "devDependencies": {
+    "supabase": "^3.2.0"
   }
 }
