@@ -54,21 +54,25 @@ function setPublicError(message) {
   error.classList.toggle("error-message", Boolean(message));
 }
 
-function renderSelectedProducts(products) {
+function renderSelectedProducts(products, now = new Date()) {
+  const currentDate = new Intl.DateTimeFormat("en", { timeZone: "Asia/Seoul", year: "numeric", month: "numeric" }).formatToParts(now);
+  const currentMonth = Number(currentDate.find((part) => part.type === "year").value) * 12
+    + Number(currentDate.find((part) => part.type === "month").value) - 1;
   const schedule = (product) => {
     const parts = (product.releaseDate || "").match(/(\d{4})년\s*(\d{1,2})월(?:\s*(\d{1,2})일)?/);
     if (!parts || Number(parts[2]) < 1 || Number(parts[2]) > 12) return { key: Infinity, day: Infinity };
     return { key: Number(parts[1]) * 12 + Number(parts[2]) - 1, year: Number(parts[1]), month: Number(parts[2]), day: Number(parts[3]) || Infinity };
   };
   const groups = new Map();
-  [...products].sort((left, right) => schedule(left).key - schedule(right).key || schedule(left).day - schedule(right).day)
+  const visibleProducts = products.filter((product) => Number.isFinite(schedule(product).key) && schedule(product).key >= currentMonth);
+  visibleProducts.sort((left, right) => schedule(left).key - schedule(right).key || schedule(left).day - schedule(right).day)
     .forEach((product) => {
       const date = schedule(product);
       if (!groups.has(date.key)) groups.set(date.key, { ...date, products: [] });
       groups.get(date.key).products.push(product);
     });
-  $("#product-count").textContent = products.length;
-  $("#empty-state").hidden = products.length > 0;
+  $("#product-count").textContent = visibleProducts.length;
+  $("#empty-state").hidden = visibleProducts.length > 0;
   $("#selected-products").innerHTML = [...groups.values()].map((group, index) => `
     <section class="arrival-month" aria-labelledby="arrival-month-${index}">
       <div class="arrival-month-heading">

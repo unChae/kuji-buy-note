@@ -17,19 +17,23 @@ test('public arrivals group chronologically across years and highlight lot and p
   context.products = [
     { id: 'later', name: '다음 해', releaseDate: '2027년 1월 2일', ticketsPerSet: 72, purchasePriceYen: 56880 },
     { id: 'unknown', name: '미정' },
+    { id: 'past', name: '지난달 상품', releaseDate: '2026년 11월 30일' },
     { id: 'earlier', name: '이번 해', releaseDate: '2026년 12월 2일', ticketsPerSet: 80, purchasePriceYen: 68000 }
   ];
-  vm.runInContext('renderSelectedProducts(products)', context);
+  vm.runInContext('renderSelectedProducts(products, new Date("2026-12-15T00:00:00Z"))', context);
   const html = elements.get('#selected-products').innerHTML;
   assert.ok(html.indexOf('이번 해') < html.indexOf('다음 해'));
-  assert.ok(html.indexOf('다음 해') < html.indexOf('입고 월 미정'));
+  assert.doesNotMatch(html, /입고 월 미정|지난달 상품/);
   assert.match(html, /2026년/);
   assert.match(html, /2027년/);
   assert.match(html, /1세트 장수/);
   assert.match(html, /56,880<span>엔/);
   assert.match(html, /72<span>장/);
   assert.match(html, /확인 중/);
-  assert.equal(elements.get('#product-count').textContent, 3);
+  assert.equal(elements.get('#product-count').textContent, 2);
+  vm.runInContext('renderSelectedProducts(products, new Date("2026-12-31T16:00:00Z"))', context);
+  assert.equal(elements.get('#product-count').textContent, 1);
+  assert.doesNotMatch(elements.get('#selected-products').innerHTML, /이번 해|지난달 상품/);
   vm.runInContext('renderSelectedProducts([])', context);
   assert.equal(elements.get('#selected-products').innerHTML, '');
   assert.equal(elements.get('#empty-state').hidden, false);
