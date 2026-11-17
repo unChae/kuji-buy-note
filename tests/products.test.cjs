@@ -39,6 +39,26 @@ test('public arrivals group chronologically across years and highlight lot and p
   assert.equal(elements.get('#empty-state').hidden, false);
 });
 
+test('Pages uses recent browser-collected quantities only for the exact product and month', () => {
+  const context = vm.createContext({ URL, window: { APP_CONFIG: {} }, document: {
+    querySelector: () => ({ src: 'https://app.example/buy-note/app.js' })
+  } });
+  vm.runInContext(fs.readFileSync('public/app.js', 'utf8').split('const adminView =')[0], context);
+  context.product = { id: 'example', name: '一番くじ テスト' };
+  context.month = { year: 2026, month: 11 };
+  context.details = { ticketsPerSet: null, unitPriceYen: 850, warnings: ['이 상품의 세트 수량을 자동 수집하지 못했습니다.'] };
+  context.now = Date.parse('2026-11-17T00:00:00Z');
+  context.snapshot = { products: [{ ...context.product, ...context.month, method: 'browser', ticketsPerSet: 80,
+    checkedAt: '2026-11-17T00:00:00Z', quantitySourceUrl: 'https://kujimap.com/1bankuji/1bankuji_202611/example' }] };
+  assert.equal(vm.runInContext('applyQuantitySnapshot(product, details, month, snapshot, now).ticketsPerSet', context), 80);
+  assert.equal(vm.runInContext('applyQuantitySnapshot(product, details, month, snapshot, now).warnings.length', context), 0);
+  assert.equal(vm.runInContext('applyQuantitySnapshot({...product, id: "other"}, details, month, snapshot, now).ticketsPerSet', context), null);
+  assert.equal(vm.runInContext('applyQuantitySnapshot(product, details, {year: 2027, month: 11}, snapshot, now).ticketsPerSet', context), null);
+  assert.equal(vm.runInContext('applyQuantitySnapshot(product, details, month, snapshot, now + 8 * 86400000).ticketsPerSet', context), null);
+  context.snapshot.products[0].quantitySourceUrl = 'https://unrelated.example/';
+  assert.equal(vm.runInContext('applyQuantitySnapshot(product, details, month, snapshot, now).ticketsPerSet', context), null);
+});
+
 test('month pagination appends two months and preserves drafts when an additional fetch fails', async () => {
   const elements = new Map();
   const batches = [];
@@ -139,7 +159,7 @@ test('protected tables and failed translation remain missing, never guessed', as
   const data = await (await request('https://edge.example/?action=inspect&id=test&name=' + encodeURIComponent('テスト') + '&year=2026&month=11')).json();
   assert.equal(data.ticketsPerSet, null);
   assert.equal(data.unitPriceYen, 790);
-  assert.ok(data.warnings.some((warning) => warning.includes('자동 수집하지 못했습니다')));
+  assert.ok(data.warnings.some((warning) => warning.includes('수량을 확인하지 못해')));
 });
 
 test('inspection requires admin and rejects invalid product identifiers', async () => {
@@ -174,6 +194,38 @@ test('operator parser excludes retweets, unknown counts and unrelated statistics
   context.html = `<div class="timeline-item" data-username="someone"><a class="tweet-link" href="/whitenoize/status/1#m"></a><div class="tweet-content media-body"><a href="https://kujimap.com/1bankuji/x/y">商品</a>ロット内訳 全80本</div></div>
     <div class="timeline-item" data-username="whitenoize"><a class="tweet-link" href="/whitenoize/status/2#m"></a><div class="tweet-content media-body"><a href="https://kujimap.com/1bankuji/x/y">商品</a>458店舗 全20種 1セット（???本）</div></div>`;
   assert.equal(vm.runInContext('extractLotNotices(html).length', context), 0);
+});
+
+test('dynamic table renderer supplies quantities without product-specific reference records', async () => {
+  const { context, request } = backend(async (url) => {
+    if (url.endsWith('/rpc/is_admin')) return Response.json(true);
+    if (url.startsWith('https://translate.googleapis.com/')) return Response.json([[['페르소나']]]);
+    if (url === 'https://1kuji.com/products/persona_30th') return new Response('メーカー希望小売価格：1回850円');
+    if (url.endsWith('1bankuji_202611')) return new Response('<h3><a href="https://kujimap.com/1bankuji/1bankuji_202611/1bankuji_10768">一番くじ 『ペルソナ』シリーズ30th ANNIVERSARY</a></h3>');
+    return new Response('<div data-kujimap-protected="table">確認中</div>');
+  });
+  const calls = [];
+  context.readRenderedKujiLot = async (url) => { calls.push(url); return '2026年11月28日開催予定 1セット（80本）内訳'; };
+  const query = new URLSearchParams({ action: 'inspect', id: 'persona_30th', name: '一番くじ 『ペルソナ』シリーズ30th ANNIVERSARY', year: '2026', month: '11' });
+  const data = await (await request('https://edge.example/?' + query)).json();
+  assert.equal(data.ticketsPerSet, 80);
+  assert.equal(data.unitPriceYen * data.ticketsPerSet, 68000);
+  assert.deepEqual(calls, ['https://kujimap.com/1bankuji/1bankuji_202611/1bankuji_10768']);
+  assert.equal(data.quantitySourceUrl, calls[0]);
+  assert.equal(data.quantityVerification, undefined);
+});
+
+test('alternate lot source requires the exact official ID, title and release month', () => {
+  const { context } = backend();
+  context.html = `<p class="pagehead__origin" lang="ja">一番くじ ジョジョの奇妙な冒険 The Gathering of RIVALS</p>
+    <dl class="facts"><div><dt>發售日</dt><dd>2026 年 11 月 21 日</dd></div><div><dt>總抽數</dt><dd>80 抽</dd></div></dl>
+    <a href="https://1kuji.com/products/jojo_26">官方商品頁</a>`;
+  context.name = '一番くじ ジョジョの奇妙な冒険 The Gathering of RIVALS';
+  assert.equal(vm.runInContext('extractAlternateSetCount(html, "jojo_26", name, 2026, 11)', context), 80);
+  assert.equal(vm.runInContext('extractAlternateSetCount(html, "jojo_25", name, 2026, 11)', context), null);
+  assert.equal(vm.runInContext('extractAlternateSetCount(html, "jojo_26", name, 2026, 12)', context), null);
+  assert.equal(vm.runInContext('extractAlternateSetCount(html, "jojo_26", name + "（再販売）", 2026, 11)', context), null);
+  assert.equal(vm.runInContext('extractAlternateSetCount(html.replace("80 抽", "80 抽（假設）"), "jojo_26", name, 2026, 11)', context), null);
 });
 
 test('cards collect independently and only publish or remove on explicit action', async () => {

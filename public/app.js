@@ -228,6 +228,26 @@ function renderCardDetails(state) {
       </div>`;
 }
 
+function applyQuantitySnapshot(product, details, month, snapshot, now = Date.now()) {
+  if (details.ticketsPerSet > 0) return details;
+  const normalize = (value) => String(value).normalize("NFKC").replace(/\s+/g, "").toLowerCase();
+  const matches = (Array.isArray(snapshot?.products) ? snapshot.products : []).filter((entry) =>
+    entry.id === product.id && normalize(entry.name) === normalize(product.name) &&
+    entry.year === month.year && entry.month === month.month && entry.method === "browser");
+  if (matches.length !== 1) return details;
+  const entry = matches[0];
+  const age = now - Date.parse(entry.checkedAt);
+  if (!Number.isFinite(age) || age < -300000 || age > 7 * 86400000 || !Number.isSafeInteger(entry.ticketsPerSet) || entry.ticketsPerSet < 1 || entry.ticketsPerSet > 10000) return details;
+  try {
+    const url = new URL(entry.quantitySourceUrl);
+    const prefix = `/1bankuji/1bankuji_${month.year}${String(month.month).padStart(2, "0")}/`;
+    if (url.origin !== "https://kujimap.com" || !url.pathname.startsWith(prefix)) return details;
+  } catch { return details; }
+  return { ...details, ticketsPerSet: entry.ticketsPerSet, quantitySourceUrl: entry.quantitySourceUrl,
+    quantityCheckedAt: entry.checkedAt, quantityMethod: "browser-snapshot",
+    warnings: (details.warnings || []).filter((warning) => !warning.startsWith("이 상품의 세트 수량") && !warning.startsWith("출처에서 수량을 확인하지 못해")) };
+}
+
 async function collectCardProduct(state) {
   if (state.loading || state.saving) return;
   state.loading = true;
@@ -237,11 +257,16 @@ async function collectCardProduct(state) {
     const { data, error } = await supabaseClient.auth.getSession();
     if (error || !data.session) throw new Error("다시 로그인해 주세요.");
     const query = new URLSearchParams({ action: "inspect", id: state.product.id, name: state.product.name, ...state.month });
-    const response = await fetch(`${productsApiUrl}?${query}`, {
-      headers: { apikey: appConfig.supabaseAnonKey, Authorization: `Bearer ${data.session.access_token}` }
-    });
-    const details = await response.json();
+    const [response, snapshot] = await Promise.all([
+      fetch(`${productsApiUrl}?${query}`, {
+        headers: { apikey: appConfig.supabaseAnonKey, Authorization: `Bearer ${data.session.access_token}` }
+      }),
+      fetch(new URL("data/lot-quantities.json", scriptUrl).href, { cache: "no-cache" })
+        .then((response) => response.ok ? response.json() : null).catch(() => null)
+    ]);
+    let details = await response.json();
     if (!response.ok) throw new Error(details.error || "정보 조회 실패");
+    details = applyQuantitySnapshot(state.product, details, state.month, snapshot);
     state.draft = { ...state.product, ...details, purchasePriceYen: details.ticketsPerSet && details.unitPriceYen ? details.ticketsPerSet * details.unitPriceYen : null };
     state.message = (details.warnings || []).join(" ") || "조회 완료 · 확인 후 등록하세요.";
   } catch (error) {

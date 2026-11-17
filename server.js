@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { stripTypeScriptTypes } = require("node:module");
+const { readRenderedKujiLot } = require("./lib/kujimap-browser.cjs");
 
 const port = Number(process.env.PORT) || 3000;
 const publicDirectory = path.join(__dirname, "public");
@@ -11,7 +12,7 @@ vm.runInContext(fs.readFileSync(path.join(publicDirectory, "config.js"), "utf8")
 const appConfig = configContext.window.APP_CONFIG || {};
 let productsHandler;
 const productsContext = vm.createContext({
-  Response, Request, URL, URLSearchParams, AbortSignal, console, fetch, Set, Date,
+  Response, Request, URL, URLSearchParams, AbortSignal, console, fetch, Set, Date, readRenderedKujiLot,
   Deno: {
     env: { get: (name) => process.env[name] || ({ SUPABASE_URL: appConfig.supabaseUrl, SUPABASE_ANON_KEY: appConfig.supabaseAnonKey })[name] },
     serve: (handler) => { productsHandler = handler; }
@@ -23,7 +24,8 @@ const mimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
-  ".svg": "image/svg+xml"
+  ".svg": "image/svg+xml",
+  ".json": "application/json; charset=utf-8"
 };
 
 const server = http.createServer(async (request, response) => {

@@ -73,6 +73,35 @@ export function extractSetCount(html: string): number | null {
 
 const normalizeTitle = (value: string) => value.normalize("NFKC").replace(/\s+/g, "").toLowerCase();
 
+export function extractAlternateSetCount(html: string, id: string, name: string, year: number, month: number): number | null {
+  const title = html.match(/<p\b[^>]*class=["'][^"']*\bpagehead__origin\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/i)?.[1];
+  if (!title || normalizeTitle(stripTags(title)) !== normalizeTitle(name)) return null;
+  const matchesOfficialId = [...html.matchAll(/<a\b[^>]*href=["']([^"']+)["']/gi)].some((match) => {
+    try {
+      const url = new URL(decodeHtmlEntities(match[1]));
+      return url.origin === "https://1kuji.com" && url.pathname.replace(/\/$/, "") === `/products/${id}`;
+    } catch { return false; }
+  });
+  if (!matchesOfficialId) return null;
+  const facts = [...html.matchAll(/<dl\b[^>]*>([\s\S]*?)<\/dl>/gi)].map((match) => match[1])
+    .find((contents) => contents.includes("總抽數") && contents.includes("發售日"));
+  if (!facts) return null;
+  const date = stripTags(facts).normalize("NFKC").match(/(\d{4})\s*年\s*(\d{1,2})\s*月/);
+  if (!date || Number(date[1]) !== year || Number(date[2]) !== month) return null;
+  const count = facts.normalize("NFKC").match(/<dt\b[^>]*>\s*總抽數\s*<\/dt>\s*<dd\b[^>]*>\s*([\d,]+)\s*抽\s*<\/dd>/i);
+  const total = count ? Number(count[1].replace(/,/g, "")) : 0;
+  return Number.isSafeInteger(total) && total > 0 && total <= 10000 ? total : null;
+}
+
+export function findKujimapProductUrl(html: string, name: string, year: number, month: number): string | null {
+  const base = `https://kujimap.com/1bankuji/1bankuji_${year}${String(month).padStart(2, "0")}`;
+  const matches = [...html.matchAll(/<h3\b[^>]*>\s*<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
+    .filter((m) => normalizeTitle(stripTags(m[2])) === normalizeTitle(name));
+  if (matches.length !== 1) return null;
+  const target = new URL(decodeHtmlEntities(matches[0][1]), base);
+  return target.origin === "https://kujimap.com" && target.pathname.startsWith(new URL(base).pathname + "/") ? target.href : null;
+}
+
 async function readSource(url: string): Promise<string> {
   const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
   if (!response.ok) throw new Error(`출처 응답 오류 (${response.status})`);
@@ -180,24 +209,35 @@ async function inspectProduct(request: Request, params: URLSearchParams): Promis
       try {
         const listUrl = `https://kujimap.com/1bankuji/1bankuji_${year}${String(month).padStart(2, "0")}`;
         const html = await readSource(listUrl);
-        const matches = [...html.matchAll(/<h3\b[^>]*>\s*<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
-          .filter((m) => normalizeTitle(stripTags(m[2])) === normalizeTitle(name));
-        if (matches.length !== 1) throw new Error("일치하는 상품을 유일하게 찾지 못했습니다.");
-        const target = new URL(decodeHtmlEntities(matches[0][1]), listUrl);
-        if (target.origin !== "https://kujimap.com" || !target.pathname.startsWith(new URL(listUrl).pathname + "/")) throw new Error("잘못된 상세 주소");
-        kujimapUrl = target.href;
+        const target = findKujimapProductUrl(html, name, year, month);
+        if (!target) throw new Error("일치하는 상품을 유일하게 찾지 못했습니다.");
+        kujimapUrl = target;
         try { ticketsPerSet = extractSetCount(await readSource(kujimapUrl)); }
         catch { /* A blocked detail response can still have a public lot announcement. */ }
+        if (!ticketsPerSet) {
+          const render = (globalThis as unknown as { readRenderedKujiLot?: (url: string) => Promise<string> }).readRenderedKujiLot;
+          if (render) {
+            try { ticketsPerSet = extractSetCount(await render(kujimapUrl)); }
+            catch (error) { console.warn("Rendered quantity unavailable:", String(error)); }
+          }
+        }
         if (ticketsPerSet) quantitySourceUrl = kujimapUrl;
         else {
-          const notice = (await readLotNotices()).find((item) => item.productUrl === kujimapUrl.replace(/\/$/, ""));
+          const notice = (await readLotNotices().catch(() => [])).find((item) => item.productUrl === kujimapUrl.replace(/\/$/, ""));
           if (notice) {
             ticketsPerSet = notice.ticketsPerSet;
             quantitySourceUrl = notice.sourceUrl;
           }
         }
-        if (!ticketsPerSet) warnings.push("이 상품의 세트 수량을 자동 수집하지 못했습니다. 수량 공개 후 다시 수집해 주세요.");
-      } catch { warnings.push("쿠지맵에서 일치하는 상품의 수량을 가져오지 못했습니다."); }
+      } catch { /* A second catalogue may already have the same product's published lot size. */ }
+      if (!ticketsPerSet) {
+        const alternateUrl = `https://ufocatchers.com/1kuji/${id}/`;
+        try {
+          ticketsPerSet = extractAlternateSetCount(await readSource(alternateUrl), id, name, year, month);
+          if (ticketsPerSet) quantitySourceUrl = alternateUrl;
+        } catch { /* Leave unverified quantities empty. */ }
+      }
+      if (!ticketsPerSet) warnings.push("출처에서 수량을 확인하지 못해 매입가를 계산할 수 없습니다. 다시 수집해 주세요.");
     })(),
     (async () => {
       try {

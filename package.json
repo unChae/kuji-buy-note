@@ -8,5 +8,8 @@
   },
   "devDependencies": {
     "supabase": "^3.2.0"
+  },
+  "dependencies": {
+    "playwright": "^1.65.1"
   }
 }
