@@ -157,11 +157,44 @@ test('extracts explicitly labelled ticket price and set size', () => {
   assert.equal(vm.runInContext('extractPrice("当選は1回まで 790円")', context), null);
 });
 
+test('official retailer field is extracted independently from price and other list items', () => {
+  const { context } = backend();
+  context.html = '<li>■メーカー希望小売価格：1回850円</li><li>■取扱店：<a href="/shops">ローソン</a>、書店、THE★JOJO WORLD、一番くじ公式ショップ、一番くじONLINEなど</li><li>■ダブルチャンスキャンペーン期間：2027年</li>';
+  const retailers = vm.runInContext('extractRetailers(html)', context);
+  assert.equal(retailers, 'ローソン、書店、THE★JOJO WORLD、一番くじ公式ショップ、一番くじONLINEなど');
+  assert.equal(vm.runInContext('formatRetailersKo(extractRetailers(html))', context), '로손, 서점, THE★JOJO WORLD, 이치방쿠지 공식숍, 이치방쿠지 ONLINE 등');
+  assert.equal(vm.runInContext('extractRetailers("<li>■発売日：2026年11月28日</li>")', context), '');
+});
+
+test('translation recovers from Google failure with another provider and caches success', async () => {
+  const calls = [];
+  const { context } = backend(async (url) => {
+    calls.push(url);
+    if (new URL(url).hostname.startsWith('translate.')) return new Response('', { status: 429 });
+    if (new URL(url).hostname === 'api.mymemory.translated.net') return Response.json({ responseStatus: 200,
+      quotaFinished: false, responseData: { translatedText: '페르소나 시리즈 30주년' } });
+    throw new Error('unexpected request');
+  });
+  context.title = '一番くじ 『ペルソナ』シリーズ30th ANNIVERSARY';
+  assert.equal(await vm.runInContext('translateTitle(title)', context), '이치방쿠지 페르소나 시리즈 30주년');
+  assert.equal(calls.length, 3);
+  assert.equal(await vm.runInContext('translateTitle(title)', context), '이치방쿠지 페르소나 시리즈 30주년');
+  assert.equal(calls.length, 3);
+});
+
+test('translation rejects unchanged Japanese and quota messages', async () => {
+  const { context } = backend(async (url) => {
+    if (new URL(url).hostname.startsWith('translate.')) return Response.json([[['ペルソナ']]]);
+    return Response.json({ responseStatus: 200, quotaFinished: true, responseData: { translatedText: 'MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS' } });
+  });
+  await assert.rejects(vm.runInContext('translateTitle("一番くじ ペルソナ")', context), /자동 번역 서비스를 사용할 수 없습니다/);
+});
+
 test('inspection matches normalized title and calculates independent source fields', async () => {
   const { request } = backend(async (url) => {
     if (url.endsWith('/rpc/is_admin')) return Response.json(true);
     if (url.startsWith('https://translate.googleapis.com/')) return Response.json([[['테스트']]]);
-    if (url === 'https://1kuji.com/products/test') return new Response('メーカー希望小売価格：1回1,000円（税込）');
+    if (url === 'https://1kuji.com/products/test') return new Response('<li>メーカー希望小売価格：1回1,000円（税込）</li><li>■取扱店：ミニストップ、ホビーショップなど</li>');
     if (url.endsWith('1bankuji_202611')) return new Response('<h3><a href="https://kujimap.com/1bankuji/1bankuji_202611/test">一番くじ テスト</a></h3>');
     if (url.endsWith('/test')) return new Response('1セット（70本）内訳');
     throw new Error(url);
@@ -169,9 +202,13 @@ test('inspection matches normalized title and calculates independent source fiel
   const response = await request('https://edge.example/?action=inspect&id=test&name=' + encodeURIComponent('一番くじ　テスト') + '&year=2026&month=11');
   const data = await response.json();
   assert.equal(response.status, 200);
+  assert.match(response.headers.get('cache-control'), /no-store/);
+  assert.equal(data.apiVersion, '2026-11-17.3');
   assert.equal(data.unitPriceYen, 1000);
   assert.equal(data.ticketsPerSet, 70);
   assert.equal(data.nameKo, '이치방쿠지 테스트');
+  assert.equal(data.retailers, 'ミニストップ、ホビーショップなど');
+  assert.equal(data.retailersKo, '미니스톱, 하비숍 등');
   assert.equal(data.warnings.length, 0);
 });
 
@@ -266,7 +303,7 @@ test('cards collect independently and only publish or remove on explicit action'
   const writes = [];
   let failSave = false;
   const context = vm.createContext({
-    URL, URLSearchParams, console,
+    URL, URLSearchParams, AbortSignal, console,
     window: { APP_CONFIG: { supabaseUrl: 'https://db.example', supabaseAnonKey: 'anon' }, supabase: { createClient: () => ({
       auth: { getSession: async () => ({ data: { session: { access_token: 'token' } } }) },
       from: () => ({
@@ -325,4 +362,33 @@ test('cards collect independently and only publish or remove on explicit action'
   assert.match(element('test.card-details').innerHTML, /번역 제목 정보가 없어/);
   assert.match(element('test.card-details').innerHTML, /정보 확인 필요/);
   assert.doesNotMatch(element('test.card-details').innerHTML, /card-loading/);
+  context.first.product.name = '一番くじ ペルソナ';
+  let inspectOptions;
+  let browserTranslations = 0;
+  context.fetch = async (url, options) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'translate.googleapis.com') {
+      browserTranslations++;
+      assert.equal(options.headers, undefined);
+      return Response.json([[['페르소나']]]);
+    }
+    if (parsed.pathname.endsWith('lot-quantities.json')) return Response.json({ products: [{
+      id: 'test', name: context.first.product.name, year: 2026, month: 11,
+      ticketsPerSet: 80, method: 'browser', checkedAt: new Date().toISOString(),
+      quantitySourceUrl: 'https://kujimap.com/1bankuji/1bankuji_202611/example'
+    }] });
+    inspectOptions = options;
+    assert.ok(parsed.searchParams.get('requestId'));
+    return Response.json({ nameKo: '', ticketsPerSet: null, unitPriceYen: 850, warnings: [
+      '자동 번역에 실패했습니다. 다시 수집해 주세요.', '쿠지맵에서 일치하는 상품의 수량을 가져오지 못했습니다.'
+    ] });
+  };
+  await vm.runInContext('collectCardProduct(first)', context);
+  assert.equal(inspectOptions.cache, 'no-store');
+  assert.equal(browserTranslations, 1);
+  assert.equal(context.first.draft.nameKo, '이치방쿠지 페르소나');
+  assert.equal(context.first.draft.purchasePriceYen, 68000);
+  assert.doesNotMatch(element('test.card-details').innerHTML, /자동 번역에 실패|정보 확인 필요|쿠지맵에서 일치/);
+  await vm.runInContext('persistCardProduct(first, true)', context);
+  assert.equal(writes[3].product.nameKo, '이치방쿠지 페르소나');
 });

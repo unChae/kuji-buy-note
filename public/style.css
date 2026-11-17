@@ -143,6 +143,9 @@ article.admin-product-card:focus-within { border-color: var(--accent); box-shado
 .registration-toggle.is-registered { border-color: var(--accent); color: white; background: var(--accent); }
 .registration-toggle.is-registered:disabled { opacity: .55; cursor: not-allowed; }
 .card-details { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 8px 10px; border-top: 1px solid var(--line); }
+.card-detail-content { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.card-retailers { margin: 0 0 7px; color: #625b4d; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.card-retailers strong { margin-right: 5px; color: var(--ink); font-weight: 700; }
 .card-numbers { flex-shrink: 0; margin: 0; font-size: 12px; }
 .card-numbers > div { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .card-numbers dt { color: #77736b; }

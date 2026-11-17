@@ -242,7 +242,8 @@ function renderCardDetails(state) {
   const details = state.card.querySelector(".card-details");
   details.innerHTML = state.loading
     ? '<p class="card-status card-loading" role="status"><span class="loading-dot" aria-hidden="true"></span>데이터 가져오는 중…</p>'
-    : `${product ? `
+    : `<div class="card-detail-content">${product ? `
+        <p class="card-retailers"><strong>취급 점포</strong> ${escapeHtml(product.retailersKo || product.retailers || "점포 정보 미확인 · 다시 조회해 주세요.")}</p>
         <dl class="card-numbers">
           <div><dt>1세트 장수</dt><dd>${product.ticketsPerSet ? escapeHtml(product.ticketsPerSet) + "장" : "미확인"}</dd></div>
           <div><dt>장당 가격</dt><dd>${product.unitPriceYen ? Number(product.unitPriceYen).toLocaleString("ko-KR") + "엔" : "미확인"}</dd></div>
@@ -250,6 +251,7 @@ function renderCardDetails(state) {
         </dl>
         <p class="card-sources">${product.quantitySourceUrl || product.kujimapUrl ? `<a href="${escapeHtml(product.quantitySourceUrl || product.kujimapUrl)}" target="_blank" rel="noopener noreferrer">수량 출처 ↗</a> · ` : ""}<a href="${escapeHtml(state.product.url)}" target="_blank" rel="noopener noreferrer">공식 가격 ↗</a></p>` : ""}
       ${message ? `<p class="card-status" role="status">${escapeHtml(message)}</p>` : ""}
+      </div>
       <div class="card-actions">
         <button class="button button-outline" type="button" data-action="collect" ${busy ? "disabled" : ""}>${product || state.message ? "다시 조회" : "조회"}</button>
         ${product ? `<button class="button button-dark" type="button" data-action="publish" ${busy || issue ? "disabled" : ""} ${issue ? `title="${escapeHtml(issue)}"` : ""}>${state.saving ? "저장 중…" : issue ? "정보 확인 필요" : registered ? "수정 등록" : "등록하기"}</button>` : ""}
@@ -288,7 +290,21 @@ function applyQuantitySnapshot(product, details, month, snapshot, now = Date.now
   } catch { return details; }
   return { ...details, ticketsPerSet: entry.ticketsPerSet, quantitySourceUrl: entry.quantitySourceUrl,
     quantityCheckedAt: entry.checkedAt, quantityMethod: "browser-snapshot",
-    warnings: (details.warnings || []).filter((warning) => !warning.startsWith("이 상품의 세트 수량") && !warning.startsWith("출처에서 수량을 확인하지 못해")) };
+    warnings: (details.warnings || []).filter((warning) => !warning.startsWith("이 상품의 세트 수량") && !warning.startsWith("출처에서 수량을 확인하지 못해") && !warning.startsWith("쿠지맵에서 일치하는 상품의 수량")) };
+}
+
+async function translateTitleInBrowser(name) {
+  const isIchiban = name.startsWith("一番くじ");
+  const text = isIchiban ? name.slice("一番くじ".length).trim() : name;
+  if (!text && isIchiban) return "이치방쿠지";
+  const query = new URLSearchParams({ client: "gtx", sl: "ja", tl: "ko", dt: "t", q: text });
+  const response = await fetch(`https://translate.googleapis.com/translate_a/single?${query}`, { signal: AbortSignal.timeout(8000) });
+  if (!response.ok) throw new Error("브라우저 번역 실패");
+  const payload = await response.json();
+  const translated = Array.isArray(payload?.[0]) ? payload[0]
+    .map((part) => Array.isArray(part) && typeof part[0] === "string" ? part[0] : "").join("").replace(/[\u200b-\u200d\ufeff]/g, "").trim() : "";
+  if (!translated || (/[\u3040-\u30ff\u3400-\u9fff]/.test(translated) && !/[가-힣]/.test(translated))) throw new Error("유효한 번역 결과가 없습니다.");
+  return isIchiban ? `이치방쿠지 ${translated}` : translated;
 }
 
 async function collectCardProduct(state) {
@@ -299,9 +315,10 @@ async function collectCardProduct(state) {
   try {
     const { data, error } = await supabaseClient.auth.getSession();
     if (error || !data.session) throw new Error("다시 로그인해 주세요.");
-    const query = new URLSearchParams({ action: "inspect", id: state.product.id, name: state.product.name, ...state.month });
+    const query = new URLSearchParams({ action: "inspect", id: state.product.id, name: state.product.name, ...state.month, requestId: String(Date.now()) });
     const [response, snapshot] = await Promise.all([
       fetch(`${productsApiUrl}?${query}`, {
+        cache: "no-store",
         headers: { apikey: appConfig.supabaseAnonKey, Authorization: `Bearer ${data.session.access_token}` }
       }),
       loadQuantitySnapshot()
@@ -309,6 +326,13 @@ async function collectCardProduct(state) {
     let details = await response.json();
     if (!response.ok) throw new Error(details.error || "정보 조회 실패");
     details = applyQuantitySnapshot(state.product, details, state.month, snapshot);
+    if (!details.nameKo?.trim()) {
+      try {
+        details.nameKo = await translateTitleInBrowser(state.product.name);
+        details.translationMethod = "browser-retry";
+        details.warnings = (details.warnings || []).filter((warning) => !warning.startsWith("자동 번역에 실패"));
+      } catch { /* Retain the server warning if both independent attempts fail. */ }
+    }
     state.draft = normalizeProduct({ ...state.product, ...details });
     state.message = (details.warnings || []).join(" ") || (isCompleteProduct(state.draft) ? "조회 완료 · 확인 후 등록하세요." : "");
   } catch (error) {

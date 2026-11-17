@@ -66,6 +66,26 @@ export function extractPrice(html: string): number | null {
   return match ? Number(match[1].replace(/,/g, "")) : null;
 }
 
+export function extractRetailers(html: string): string {
+  const row = [...html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)]
+    .map((match) => stripTags(match[1]))
+    .find((text) => /^\s*■?\s*(?:取扱店|取り扱い店舗)\s*[：:]/.test(text));
+  return row ? row.replace(/^\s*■?\s*(?:取扱店|取り扱い店舗)\s*[：:]\s*/, "").trim().replace(/\s*、\s*/g, "、") : "";
+}
+
+export function formatRetailersKo(value: string): string {
+  const labels: Record<string, string> = {
+    "一番くじ公式ショップ": "이치방쿠지 공식숍", "一番くじONLINE": "이치방쿠지 ONLINE",
+    "ローソン": "로손", "セブン-イレブン": "세븐일레븐", "ファミリーマート": "패밀리마트",
+    "ミニストップ": "미니스톱", "イトーヨーカドー": "이토요카도", "書店": "서점",
+    "ホビーショップ": "하비숍", "アニメショップ": "애니메이션숍", "アニメイト": "애니메이트",
+    "ゲームセンター": "게임센터", "ドラッグストア": "드럭스토어", "一部店舗": "일부 매장", "など": " 등"
+  };
+  let result = value;
+  for (const [original, translated] of Object.entries(labels)) result = result.replaceAll(original, translated);
+  return result.replace(/、/g, ", ").replace(/\s+/g, " ").trim();
+}
+
 export function extractSetCount(html: string): number | null {
   const match = stripTags(html).normalize("NFKC").match(/1\s*セット\s*[(（]\s*([\d,]+)\s*(?:本|枚)/);
   return match ? Number(match[1].replace(/,/g, "")) : null;
@@ -154,30 +174,69 @@ async function readLotNotices(): Promise<LotNotice[]> {
   try { return await noticeRequest; } finally { noticeRequest = null; }
 }
 
+const titleTranslations = new Map<string, { value: string; expires: number }>();
+
+function translatedText(value: unknown, original: string): string {
+  if (typeof value !== "string") return "";
+  const result = decodeHtmlEntities(value).replace(/[\u200b-\u200d\ufeff]/g, "").trim();
+  if (!result) return "";
+  // An unchanged Japanese response is not a completed Korean translation.
+  if (/[\u3040-\u30ff\u3400-\u9fff]/.test(original) && normalizeTitle(result) === normalizeTitle(original)) return "";
+  if (/[\u3040-\u30ff\u3400-\u9fff]/.test(result) && !/[가-힣]/.test(result)) return "";
+  return result;
+}
+
 export async function translateTitle(name: string): Promise<string> {
+  const cached = titleTranslations.get(name);
+  if (cached && cached.expires > Date.now()) return cached.value;
+  const remember = (value: string) => {
+    if (titleTranslations.size >= 1000) {
+      const oldest = titleTranslations.keys().next().value;
+      if (oldest !== undefined) titleTranslations.delete(oldest);
+    }
+    titleTranslations.set(name, { value, expires: Date.now() + 6 * 3600000 });
+    return value;
+  };
   const key = Deno.env.get("DEEPL_AUTH_KEY");
   if (key) {
     try {
       const host = key.endsWith(":fx") ? "api-free.deepl.com" : "api.deepl.com";
       const response = await fetch(`https://${host}/v2/translate`, {
         method: "POST", headers: { Authorization: `DeepL-Auth-Key ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ text: [name], source_lang: "JA", target_lang: "KO" }), signal: AbortSignal.timeout(15000)
+        body: JSON.stringify({ text: [name], source_lang: "JA", target_lang: "KO" }), signal: AbortSignal.timeout(8000)
       });
       if (response.ok) {
-        const result = (await response.json()).translations?.[0]?.text;
-        if (typeof result === "string" && /[가-힣]/.test(result)) return result;
+        const result = translatedText((await response.json()).translations?.[0]?.text, name);
+        if (result) return remember(result);
       }
     } catch { /* Fall back to the public translation service. */ }
   }
   const isIchiban = name.startsWith("一番くじ");
   const text = isIchiban ? name.slice("一番くじ".length).trim() : name;
+  if (!text && isIchiban) return remember("이치방쿠지");
   const query = new URLSearchParams({ client: "gtx", sl: "ja", tl: "ko", dt: "t", q: text });
-  const response = await fetch(`https://translate.googleapis.com/translate_a/single?${query}`, { signal: AbortSignal.timeout(15000) });
-  if (!response.ok) throw new Error("자동 번역 서비스 응답 오류");
-  const payload = await response.json();
-  const translated = Array.isArray(payload?.[0]) ? payload[0].map((part: unknown[]) => typeof part?.[0] === "string" ? part[0] : "").join("").replace(/[\u200b-\u200d\ufeff]/g, "").trim() : "";
-  if (!translated) throw new Error("자동 번역 결과 없음");
-  return isIchiban ? `이치방쿠지 ${translated}` : translated;
+  for (const host of ["translate.googleapis.com", "translate.google.com"]) {
+    try {
+      const response = await fetch(`https://${host}/translate_a/single?${query}`, { signal: AbortSignal.timeout(6000) });
+      if (!response.ok) continue;
+      const payload = await response.json();
+      const value = Array.isArray(payload?.[0]) ? payload[0].map((part: unknown) => Array.isArray(part) && typeof part[0] === "string" ? part[0] : "").join("") : "";
+      const translated = translatedText(value, text);
+      if (translated) return remember(isIchiban ? `이치방쿠지 ${translated}` : translated);
+    } catch { /* Try the next provider on timeout, malformed JSON, or an upstream failure. */ }
+  }
+  try {
+    const fallbackQuery = new URLSearchParams({ q: text, langpair: "ja|ko" });
+    const response = await fetch(`https://api.mymemory.translated.net/get?${fallbackQuery}`, { signal: AbortSignal.timeout(8000) });
+    if (response.ok) {
+      const payload = await response.json();
+      if (Number(payload.responseStatus) === 200 && !payload.quotaFinished) {
+        const translated = translatedText(payload.responseData?.translatedText, text);
+        if (translated) return remember(isIchiban ? `이치방쿠지 ${translated}` : translated);
+      }
+    }
+  } catch { /* Never store a provider's error message as the product title. */ }
+  throw new Error("자동 번역 서비스를 사용할 수 없습니다.");
 }
 
 async function inspectProduct(request: Request, params: URLSearchParams): Promise<Response> {
@@ -195,13 +254,20 @@ async function inspectProduct(request: Request, params: URLSearchParams): Promis
   }
   const warnings: string[] = [];
   let unitPriceYen: number | null = null;
+  let retailers = "";
+  let retailersKo = "";
   let ticketsPerSet: number | null = null;
   let nameKo = "";
   let kujimapUrl = "";
   let quantitySourceUrl = "";
   await Promise.all([
     (async () => {
-      try { unitPriceYen = extractPrice(await readSource(`https://1kuji.com/products/${id}`)); }
+      try {
+        const html = await readSource(`https://1kuji.com/products/${id}`);
+        unitPriceYen = extractPrice(html);
+        retailers = extractRetailers(html);
+        retailersKo = formatRetailersKo(retailers);
+      }
       catch { warnings.push("공식 사이트 가격을 가져오지 못했습니다."); }
       if (!unitPriceYen) warnings.push("공식 사이트에 장당 가격이 아직 공개되지 않았거나 수집에 실패했습니다. 다시 수집해 주세요.");
     })(),
@@ -245,7 +311,7 @@ async function inspectProduct(request: Request, params: URLSearchParams): Promis
       } catch { warnings.push("자동 번역에 실패했습니다. 다시 수집해 주세요."); }
     })()
   ]);
-  return jsonResponse({ nameKo, unitPriceYen, ticketsPerSet, kujimapUrl, quantitySourceUrl, warnings, checkedAt: new Date().toISOString() });
+  return jsonResponse({ apiVersion: "2026-11-17.3", nameKo, unitPriceYen, ticketsPerSet, retailers, retailersKo, kujimapUrl, quantitySourceUrl, warnings, checkedAt: new Date().toISOString() });
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -253,6 +319,7 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: {
       ...corsHeaders,
+      "Cache-Control": "no-store, max-age=0",
       "Content-Type": "application/json; charset=utf-8"
     }
   });
