@@ -11,16 +11,24 @@ function setup() {
   const elements = new Map();
   const element = (selector) => {
     if (!elements.has(selector)) elements.set(selector, { innerHTML: '', textContent: '', hidden: false,
+      showModal() { this.open = true; }, close() { this.open = false; },
       attributes: {}, classList: { toggle() {} }, setAttribute(key, value) { this.attributes[key] = value; } });
     return elements.get(selector);
   };
   const buttons = ['incoming', 'all'].map((view) => Object.assign(element(view), { dataset: { publicView: view } }));
   const product = (id, name, day) => ({ id, name, image: 'https://example.com/image.jpg', url: `https://1kuji.com/products/${id}`, releaseDate: `2026년 11월 ${day}일` });
   const registered = { ...product('a', '公式A', 28), nameKo: '등록 상품', ticketsPerSet: 80, unitPriceYen: 850, purchasePriceYen: 68000 };
-  const state = { registered: [registered], requests: [], cached: [], cacheFail: false, fail: false, pause: null };
+  const state = { registered: [registered], requests: [], cached: [], cacheFail: false, fail: false, pause: null, receiptReads: 0 };
   const context = vm.createContext({ URL, URLSearchParams, AbortSignal, Date: FixedDate, console,
     window: { APP_CONFIG: { supabaseUrl: 'https://db.example', supabaseAnonKey: 'anon' },
-      supabase: { createClient: () => ({ from: () => ({ select: async () => ({ data: state.registered.map((product) => ({ product })) }) }) }) } },
+      supabase: { createClient: () => ({
+        rpc: async () => ({ data: state.isAdmin === true }),
+        from: (table) => ({
+          select: () => table === 'product_receipts'
+            ? { order() { return this; }, async range() { state.receiptReads++; return { data: state.receipts }; } }
+            : Promise.resolve({ data: state.registered.map((product) => ({ product })) })
+        })
+      }) } },
     document: { querySelector: (selector) => selector.startsWith('script') ? { src: 'https://app.example/app.js' } : element(selector), querySelectorAll: () => buttons },
     fetch: async (url) => {
       const query = new URL(url).searchParams;
@@ -40,6 +48,33 @@ function setup() {
   vm.runInContext(fs.readFileSync('public/app.js', 'utf8').split('const adminView =')[0], context);
   return { context, state, element };
 }
+
+test('only administrators can open supplier requests for registered products', async () => {
+  const { context, state, element } = setup();
+  const run = (source) => vm.runInContext(source, context);
+  state.receipts = [
+    { product_id: 'a', supplier: '업체 A', quantity: 3 },
+    { product_id: 'a', supplier: '<업체 B>', quantity: 5 }
+  ];
+  await run('loadPublicProducts()');
+  await run('refreshPublicReceipts()');
+  assert.equal(state.receiptReads, 0);
+  assert.doesNotMatch(element('#selected-products').innerHTML, /data-request-product/);
+  state.isAdmin = true;
+  await run('refreshPublicReceipts()');
+  await run('setPublicView("all")');
+  assert.match(element('#selected-products').innerHTML, /data-request-product="a">입고 요청 8개/);
+  assert.doesNotMatch(element('#selected-products').innerHTML, /data-request-product="b"/);
+  run('openPublicReceiptDialog("a")');
+  assert.equal(element('#public-request-dialog').open, true);
+  assert.match(element('#public-request-suppliers').innerHTML, /업체 A<\/dt><dd>3개/);
+  assert.match(element('#public-request-suppliers').innerHTML, /&lt;업체 B&gt;<\/dt><dd>5개/);
+  state.isAdmin = false;
+  await run('refreshPublicReceipts()');
+  assert.equal(element('#public-request-dialog').open, false);
+  assert.equal(element('#public-request-suppliers').innerHTML, '');
+  assert.doesNotMatch(element('#selected-products').innerHTML, /data-request-product/);
+});
 
 test('default shows registered items; all view merges by ID, sorts dates and marks unregistered items', async () => {
   const { context, state, element } = setup();

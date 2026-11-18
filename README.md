@@ -73,6 +73,7 @@ GitHub Pages에서 정적 화면을 제공하고, Supabase에서 관리자 인�
 ## 1. Supabase 준비
 
 1. Supabase 프로젝트를 만들고 SQL Editor에서 [`supabase/schema.sql`](./supabase/schema.sql)을 실행합니다.
+   기존 Supabase 프로젝트에서 업체별 입고 요청 수량을 기록하려면 [업체별 수량 마이그레이션](./supabase/migrations/202611180003_product_receipts.sql)을 적용합니다.
 2. Authentication 설정에서 공개 회원가입을 비활성화하고, 관리자 사용자를 직접 생성합니다.
 3. 생성된 사용자의 UUID를 확인한 뒤 SQL Editor에서 등록합니다.
 

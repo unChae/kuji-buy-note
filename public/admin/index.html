@@ -12,6 +12,26 @@
     <script src="../app.js" defer></script>
   </head>
   <body>
+    <dialog class="receipt-dialog" id="receipt-dialog" aria-labelledby="receipt-title">
+      <form id="receipt-form">
+        <h2 id="receipt-title">업체별 입고 요청 수량</h2>
+        <p id="receipt-product-name"></p>
+        <div class="receipt-suppliers" id="receipt-suppliers"></div>
+        <button class="button button-outline" id="receipt-add" type="button">+ 업체 추가</button>
+        <p class="card-status" id="receipt-error" role="alert" hidden></p>
+        <div class="auth-actions">
+          <button class="button button-outline" id="receipt-close" type="button">닫기</button>
+          <button class="button button-dark" id="receipt-save" type="submit">저장</button>
+        </div>
+      </form>
+    </dialog>
+    <template id="receipt-row-template">
+      <div class="receipt-row">
+        <label>업체명 <input name="supplier" maxlength="120" required></label>
+        <label>요청 수량 <input name="quantity" type="number" min="0" max="2147483647" step="1" required></label>
+        <button class="button button-outline" type="button" data-remove-supplier>삭제</button>
+      </div>
+    </template>
     <div class="auth-backdrop" id="admin-auth" hidden>
       <form class="auth-dialog" id="admin-auth-form" role="dialog" aria-modal="true" aria-labelledby="auth-title">
         <p class="eyebrow">관리자 로그인</p>

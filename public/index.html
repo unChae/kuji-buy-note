@@ -12,6 +12,15 @@
     <script src="app.js" defer></script>
   </head>
   <body>
+    <dialog class="receipt-dialog" id="public-request-dialog" aria-labelledby="public-request-title">
+      <h2 id="public-request-title">업체별 입고 요청 수량</h2>
+      <p id="public-request-product"></p>
+      <dl class="public-request-suppliers" id="public-request-suppliers"></dl>
+      <p id="public-request-empty" hidden>등록된 입고 요청이 없습니다.</p>
+      <form class="auth-actions" method="dialog">
+        <button class="button button-outline" type="submit" autofocus>닫기</button>
+      </form>
+    </dialog>
     <header class="site-header">
       <a class="brand" href="./" aria-label="치바쿠지 입고 상품 안내 홈">
         <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><ellipse cx="7" cy="13" rx="3" ry="4" transform="rotate(-25 7 13)"/><ellipse cx="12" cy="6.5" rx="3" ry="4" transform="rotate(-10 12 6.5)"/><ellipse cx="21" cy="6.5" rx="3" ry="4" transform="rotate(10 21 6.5)"/><ellipse cx="26" cy="13" rx="3" ry="4" transform="rotate(25 26 13)"/><path d="M16 15c-3 0-4 3-6 5-3 4-1 8 3 7l3-1 3 1c4 1 6-3 3-7-2-2-3-5-6-5Z"/></svg></span>

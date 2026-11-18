@@ -11,6 +11,30 @@ const supabaseClient = appConfig.supabaseUrl && appConfig.supabaseAnonKey && win
   : null;
 
 let selectedProducts = new Map();
+let adminReceipts = null;
+let receiptCard = null;
+let publicReceipts = null;
+let publicReceiptRequest = 0;
+
+function totalRequestedQuantity(suppliers) {
+  return [...(suppliers?.values() ?? [])].reduce((total, quantity) => total + quantity, 0);
+}
+
+async function fetchProductReceipts() {
+  const receipts = new Map();
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabaseClient.from("product_receipts")
+      .select("product_id, supplier, quantity").order("product_id").order("supplier")
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    for (const { product_id, supplier, quantity } of data) {
+      if (!receipts.has(product_id)) receipts.set(product_id, new Map());
+      receipts.get(product_id).set(supplier, quantity);
+    }
+    if (data.length < pageSize) return receipts;
+  }
+}
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
@@ -23,6 +47,9 @@ function escapeHtml(value) {
 }
 
 function productCard(product) {
+  const requestQuantity = publicReceipts && product.isIncoming !== false
+    ? totalRequestedQuantity(publicReceipts.get(product.id))
+    : null;
   const quantitySourceUrl = product.quantitySourceUrl || product.kujimapUrl;
   const officialPriceUrl = product.officialPriceUrl || product.url;
   const release = product.releaseDate
@@ -42,7 +69,11 @@ function productCard(product) {
         <div class="product-lot"><dt>1세트 장수</dt><dd>${Number(product.ticketsPerSet) > 0 ? `${Number(product.ticketsPerSet).toLocaleString("ko-KR")}<span>장</span>` : "미확인"}</dd></div>
         <div class="product-unit-price"><dt>장당 가격</dt><dd>${Number(product.unitPriceYen) > 0 ? `${Number(product.unitPriceYen).toLocaleString("ko-KR")}<span>엔</span>` : "미확인"}</dd></div>
         <div class="product-price"><dt>세트 매입가</dt><dd>${Number(product.purchasePriceYen) > 0 ? `${Number(product.purchasePriceYen).toLocaleString("ko-KR")}<span>엔</span>` : "미확인"}</dd></div>
-        <div class="product-source-links"><dt class="sr-only">정보 출처</dt><dd>${quantitySourceUrl ? `<a href="${escapeHtml(quantitySourceUrl)}" target="_blank" rel="noopener noreferrer">수량 출처 ↗</a>` : ""}${officialPriceUrl ? `<a href="${escapeHtml(officialPriceUrl)}" target="_blank" rel="noopener noreferrer">공식 가격 ↗</a>` : ""}</dd></div>
+        <div class="product-source-links"><dt class="sr-only">상품 정보</dt><dd>
+          ${requestQuantity === null ? "" : `<button class="product-request-button" type="button" data-request-product="${escapeHtml(product.id)}">입고 요청 ${requestQuantity.toLocaleString("ko-KR")}개</button>`}
+          ${quantitySourceUrl ? `<a href="${escapeHtml(quantitySourceUrl)}" target="_blank" rel="noopener noreferrer">수량 출처 ↗</a>` : ""}
+          ${officialPriceUrl ? `<a href="${escapeHtml(officialPriceUrl)}" target="_blank" rel="noopener noreferrer">공식 가격 ↗</a>` : ""}
+        </dd></div>
       </dl>
     </article>`;
 }
@@ -209,6 +240,41 @@ async function loadPublicProducts() {
   }
 }
 
+function clearPublicReceiptDialog() {
+  const dialog = $("#public-request-dialog");
+  if (dialog.open) dialog.close();
+  $("#public-request-product").textContent = "";
+  $("#public-request-suppliers").innerHTML = "";
+}
+
+async function refreshPublicReceipts() {
+  const request = ++publicReceiptRequest;
+  let receipts = null;
+  try {
+    const { data: isAdmin, error } = await supabaseClient.rpc("is_admin");
+    if (!error && isAdmin === true) receipts = await fetchProductReceipts();
+  } catch {
+    // Keep the public list usable if private request data cannot be read.
+  }
+  if (request !== publicReceiptRequest || (receipts === null && publicReceipts === null)) return;
+  publicReceipts = receipts;
+  if (!receipts) clearPublicReceiptDialog();
+  renderPublicProductList();
+}
+
+function openPublicReceiptDialog(productId) {
+  if (!publicReceipts) return;
+  const product = publicRegisteredProducts.find(({ id }) => id === productId);
+  if (!product) return;
+  const suppliers = publicReceipts.get(productId);
+  $("#public-request-product").textContent = product.nameKo || product.name;
+  $("#public-request-suppliers").innerHTML = [...(suppliers ?? [])].map(([supplier, quantity]) =>
+    `<div><dt>${escapeHtml(supplier)}</dt><dd>${quantity.toLocaleString("ko-KR")}개</dd></div>`
+  ).join("");
+  $("#public-request-empty").hidden = Boolean(suppliers?.size);
+  $("#public-request-dialog").showModal();
+}
+
 function getTargetMonths(startOffset = 0, count = 2, now = new Date()) {
   return Array.from({ length: count }, (_, offset) => {
     const date = new Date(now.getFullYear(), now.getMonth() + startOffset + offset, 1);
@@ -303,12 +369,95 @@ async function saveProductSelection(product, isSelected) {
       : await supabaseClient.from("display_products").delete().eq("id", product.id);
     if (result.error) throw result.error;
     if (isSelected) selectedProducts.set(product.id, savedProduct);
-    else selectedProducts.delete(product.id);
+    else {
+      selectedProducts.delete(product.id);
+      adminReceipts?.delete(product.id);
+    }
     updateSelectionStatus();
     return true;
   } catch (error) {
     showAdminError(`상품을 저장하지 못했습니다: ${error.message || String(error)}`);
     return false;
+  }
+}
+
+async function loadProductSelections() {
+  const { data, error } = await supabaseClient.from("display_products").select("id, product");
+  if (error) throw error;
+  selectedProducts = new Map(data.map((row) => [row.id, row.product]));
+}
+
+function addReceiptRow(supplier = "", quantity = "") {
+  const row = $("#receipt-row-template").content.firstElementChild.cloneNode(true);
+  const supplierInput = row.querySelector('[name="supplier"]');
+  supplierInput.value = supplier;
+  supplierInput.readOnly = Boolean(supplier);
+  row.querySelector('[name="quantity"]').value = quantity;
+  row.querySelector("[data-remove-supplier]").hidden = Boolean(supplier);
+  $("#receipt-suppliers").append(row);
+  return row;
+}
+
+function openReceiptDialog(state) {
+  if (!adminReceipts || !selectedProducts.has(state.product.id)) return;
+  receiptCard = state;
+  const product = selectedProducts.get(state.product.id);
+  const receipts = adminReceipts.get(state.product.id) ?? new Map();
+  $("#receipt-error").hidden = true;
+  $("#receipt-product-name").textContent = product.nameKo || product.name;
+  $("#receipt-suppliers").replaceChildren();
+  for (const [supplier, quantity] of receipts) addReceiptRow(supplier, quantity);
+  if (!receipts.size) addReceiptRow();
+  $("#receipt-dialog").showModal();
+  $("#receipt-suppliers").querySelector("input:not([readonly])").focus();
+}
+
+async function saveReceipt(event) {
+  event.preventDefault();
+  const state = receiptCard;
+  const saveButton = $("#receipt-save");
+  if (!state || saveButton.disabled || !selectedProducts.has(state.product.id)) return;
+  const productId = state.product.id;
+  const receipts = adminReceipts.get(productId) ?? new Map();
+  const entries = new Map();
+  const errorText = $("#receipt-error");
+  for (const row of $("#receipt-suppliers").children) {
+    const supplierInput = row.querySelector('[name="supplier"]');
+    const supplier = supplierInput.value.trim();
+    const quantity = row.querySelector('[name="quantity"]').valueAsNumber;
+    if (!supplier || supplier.length > 120 || !Number.isInteger(quantity) || quantity < 0 || quantity > 2147483647 || entries.has(supplier)) {
+      errorText.textContent = entries.has(supplier)
+        ? "같은 업체는 한 줄에 입력해 주세요."
+        : "업체명과 0 이상의 요청 수량을 입력해 주세요.";
+      errorText.hidden = false;
+      supplierInput.focus();
+      return;
+    }
+    entries.set(supplier, quantity);
+  }
+  const changes = [...entries].filter(([supplier, quantity]) => receipts.get(supplier) !== quantity)
+    .map(([supplier, quantity]) => ({ product_id: productId, supplier, quantity }));
+  if (!changes.length) {
+    $("#receipt-dialog").close();
+    return;
+  }
+  const controls = [...event.currentTarget.elements];
+  controls.forEach((control) => { control.disabled = true; });
+  errorText.hidden = true;
+  saveButton.textContent = "저장 중…";
+  try {
+    const { error } = await supabaseClient.from("product_receipts").upsert(changes);
+    if (error) throw error;
+    adminReceipts.set(productId, entries);
+    $("#receipt-dialog").close();
+    renderCardDetails(state);
+    state.card.querySelector('[data-action="edit-receipts"]')?.focus();
+  } catch {
+    errorText.textContent = "입고 요청 수량을 저장하지 못했습니다. 다시 시도해 주세요.";
+    errorText.hidden = false;
+  } finally {
+    controls.forEach((control) => { control.disabled = false; });
+    saveButton.textContent = "저장";
   }
 }
 
@@ -319,6 +468,7 @@ function renderCardDetails(state) {
   const issue = product ? registrationIssue(product) : "";
   const message = issue ? [state.message, issue].filter(Boolean).join(" ") : state.message;
   const busy = state.loading || state.saving;
+  const requestedQuantity = totalRequestedQuantity(adminReceipts?.get(state.product.id));
   state.card.classList.toggle("has-details", Boolean(state.loading || product || state.message));
   state.card.setAttribute("aria-busy", String(busy));
   state.card.querySelector(".product-name").textContent = product?.nameKo || state.product.name;
@@ -339,8 +489,12 @@ function renderCardDetails(state) {
           <div><dt>장당 가격</dt><dd>${product.unitPriceYen ? Number(product.unitPriceYen).toLocaleString("ko-KR") + "엔" : "미확인"}</dd></div>
           <div class="card-total"><dt>매입가</dt><dd>${product.purchasePriceYen ? Number(product.purchasePriceYen).toLocaleString("ko-KR") + "엔" : "미확인"}</dd></div>
         </dl>
-        <p class="card-sources">${product.quantitySourceUrl || product.kujimapUrl ? `<a href="${escapeHtml(product.quantitySourceUrl || product.kujimapUrl)}" target="_blank" rel="noopener noreferrer">수량 출처 ↗</a> · ` : ""}<a href="${escapeHtml(state.product.url)}" target="_blank" rel="noopener noreferrer">공식 가격 ↗</a></p>` : ""}
+        ${product.quantitySourceUrl || product.kujimapUrl ? `<p class="card-sources"><a href="${escapeHtml(product.quantitySourceUrl || product.kujimapUrl)}" target="_blank" rel="noopener noreferrer">수량 출처 ↗</a></p>` : ""}` : ""}
       ${message ? `<p class="card-status" role="status">${escapeHtml(message)}</p>` : ""}
+      ${registered && adminReceipts ? `<div class="card-receipt">
+        <span>입고 요청 수량 <strong>${requestedQuantity.toLocaleString("ko-KR")}개</strong></span>
+        <button class="button button-outline" type="button" data-action="edit-receipts" ${busy ? "disabled" : ""}>업체별 요청</button>
+      </div>` : ""}
       </div>
       <div class="card-actions">
         <button class="button button-outline" type="button" data-action="collect" ${busy ? "disabled" : ""}>${product || state.message ? "다시 조회" : "조회"}</button>
@@ -492,13 +646,10 @@ async function loadAdminProducts(append = false) {
   showAdminError("");
 
   try {
-    const [{ data, error }, ...results] = await Promise.all([
-      append ? Promise.resolve({ data: null, error: null }) : supabaseClient.from("display_products").select("id, product"),
-      ...months.map(fetchProducts)
+    const [results] = await Promise.all([
+      Promise.all(months.map(fetchProducts)),
+      append ? null : loadProductSelections()
     ]);
-    if (error) throw error;
-
-    if (!append) selectedProducts = new Map(data.map((row) => [row.id, row.product]));
     batch.innerHTML = results.map((result) => `
       <section class="month-group">
         <div class="month-heading">
@@ -509,13 +660,15 @@ async function loadAdminProducts(append = false) {
           ? `<div class="admin-product-grid">${result.products.map((product) => `
               <article class="admin-product-card" data-product-id="${escapeHtml(product.id)}">
                 <button class="registration-toggle" data-action="remove" type="button" aria-label="미등록" aria-pressed="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 12 4 4L19 6"/></svg></button>
-                <a class="card-site-link" href="${escapeHtml(product.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(product.name)} 공식 사이트">
-                  <img src="${escapeHtml(product.image)}" alt="" loading="lazy">
+                <div class="card-product-header">
+                  <a class="card-image-link" href="${escapeHtml(product.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(product.name)} 공식 사이트">
+                    <img src="${escapeHtml(product.image)}" alt="" loading="lazy">
+                  </a>
                   <span class="admin-product-info">
                     ${product.releaseDate ? `<span class="product-date">${escapeHtml(product.releaseDate)}</span>` : ""}
-                    <span class="product-name">${escapeHtml(product.name)}</span>
+                    <a class="product-name" href="${escapeHtml(product.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(product.name)}</a>
                   </span>
-                </a>
+                </div>
                 <div class="card-details"></div>
               </article>`).join("")}</div>`
           : `<p class="no-products">이 달에 공개된 상품이 없습니다.</p>`}
@@ -529,14 +682,11 @@ async function loadAdminProducts(append = false) {
       renderCardDetails(state);
       card.addEventListener("click", (event) => {
         const button = event.target.closest("button[data-action]");
-        if (!button) {
-          if (!event.target.closest("a")) window.open(product.url, "_blank", "noopener,noreferrer");
-          return;
-        }
-        if (button.disabled) return;
+        if (!button || button.disabled) return;
         if (button.dataset.action === "collect") collectCardProduct(state);
         else if (button.dataset.action === "publish") persistCardProduct(state, true);
         else if (button.dataset.action === "remove" && selectedProducts.has(product.id)) persistCardProduct(state, false);
+        else if (button.dataset.action === "edit-receipts") openReceiptDialog(state);
       });
     });
     loadedMonthCount += months.length;
@@ -570,7 +720,13 @@ async function openAdmin() {
       throw new Error("이 계정에 관리자 권한이 없습니다.");
     }
     $("#admin-auth").hidden = true;
+    try {
+      adminReceipts = await fetchProductReceipts();
+    } catch {
+      adminReceipts = null;
+    }
     await loadAdminProducts();
+    if (!adminReceipts) showAdminError("업체별 입고 요청 수량을 불러오지 못했습니다. 페이지를 새로고침해 주세요.");
   } catch (error) {
     $("#admin-auth").hidden = false;
     $("#auth-error").textContent = error.message;
@@ -592,6 +748,24 @@ if (adminView) {
     authDialog.hidden = true;
     showAdminError("Supabase 설정을 먼저 완료해 주세요. 설정 방법은 README를 확인하세요.");
   } else {
+    const receiptDialog = $("#receipt-dialog");
+    $("#receipt-form").addEventListener("submit", saveReceipt);
+    $("#receipt-close").addEventListener("click", () => receiptDialog.close());
+    receiptDialog.addEventListener("cancel", (event) => {
+      if ($("#receipt-save").disabled) event.preventDefault();
+    });
+    receiptDialog.addEventListener("close", () => { receiptCard = null; });
+    $("#receipt-add").addEventListener("click", () => {
+      addReceiptRow().querySelector("input").focus();
+      $("#receipt-error").hidden = true;
+    });
+    $("#receipt-suppliers").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-remove-supplier]");
+      if (!button) return;
+      button.closest(".receipt-row").remove();
+      $("#receipt-error").hidden = true;
+      $("#receipt-add").focus();
+    });
     $("#admin-auth-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       authError.hidden = true;
@@ -634,12 +808,37 @@ if (adminView) {
       });
   }
 } else {
+  $("#selected-products").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-request-product]");
+    if (button) openPublicReceiptDialog(button.dataset.requestProduct);
+  });
   $("#public-view-switch")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-public-view]");
     if (button) setPublicView(button.dataset.publicView);
   });
   loadPublicProducts();
+  let receiptUserId = null;
+  supabaseClient?.auth.onAuthStateChange((event, session) => {
+    const userId = session?.user.id ?? null;
+    if (userId !== receiptUserId) {
+      receiptUserId = userId;
+      publicReceiptRequest++;
+      if (publicReceipts) {
+        publicReceipts = null;
+        clearPublicReceiptDialog();
+        renderPublicProductList();
+      }
+    }
+    if (userId && (event === "INITIAL_SESSION" || event === "SIGNED_IN")) {
+      window.setTimeout(() => {
+        if (receiptUserId === userId) refreshPublicReceipts();
+      }, 0);
+    }
+  });
   window.setInterval(() => {
-    if (document.visibilityState === "visible") loadPublicProducts();
+    if (document.visibilityState === "visible") {
+      loadPublicProducts();
+      if (receiptUserId) refreshPublicReceipts();
+    }
   }, 60000);
 }

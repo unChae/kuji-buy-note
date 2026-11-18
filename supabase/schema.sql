@@ -75,3 +75,39 @@ drop policy if exists "Admins can insert catalog" on public.catalog_products;
 create policy "Admins can insert catalog" on public.catalog_products for insert to authenticated with check (public.is_admin());
 drop policy if exists "Admins can update catalog" on public.catalog_products;
 create policy "Admins can update catalog" on public.catalog_products for update to authenticated using (public.is_admin()) with check (public.is_admin());
+
+create table if not exists public.product_restock_requests (
+  product_id text primary key references public.display_products (id) on delete cascade,
+  quantity integer not null check (quantity >= 0)
+);
+
+alter table public.product_restock_requests enable row level security;
+revoke all on public.product_restock_requests from public, anon, authenticated;
+grant select, insert, update on public.product_restock_requests to authenticated;
+
+drop policy if exists "Admins can read restock requests" on public.product_restock_requests;
+create policy "Admins can read restock requests" on public.product_restock_requests
+  for select to authenticated using ((select public.is_admin()));
+
+drop policy if exists "Admins can insert restock requests" on public.product_restock_requests;
+create policy "Admins can insert restock requests" on public.product_restock_requests
+  for insert to authenticated with check ((select public.is_admin()));
+
+drop policy if exists "Admins can update restock requests" on public.product_restock_requests;
+create policy "Admins can update restock requests" on public.product_restock_requests
+  for update to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
+
+create table if not exists public.product_receipts (
+  product_id text not null references public.display_products (id) on delete cascade,
+  supplier text not null check (supplier = btrim(supplier) and char_length(supplier) between 1 and 120),
+  quantity integer not null check (quantity >= 0),
+  primary key (product_id, supplier)
+);
+
+alter table public.product_receipts enable row level security;
+revoke all on public.product_receipts from public, anon, authenticated;
+grant select, insert, update on public.product_receipts to authenticated;
+
+drop policy if exists "Admins can manage product receipts" on public.product_receipts;
+create policy "Admins can manage product receipts" on public.product_receipts
+  for all to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
