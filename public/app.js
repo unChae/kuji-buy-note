@@ -391,7 +391,6 @@ function addReceiptRow(supplier = "", quantity = "") {
   const row = $("#receipt-row-template").content.firstElementChild.cloneNode(true);
   const supplierInput = row.querySelector('[name="supplier"]');
   supplierInput.value = supplier;
-  supplierInput.readOnly = Boolean(supplier);
   row.querySelector('[name="quantity"]').value = quantity;
   row.querySelector("[data-remove-supplier]").hidden = Boolean(supplier);
   $("#receipt-suppliers").append(row);
@@ -409,7 +408,7 @@ function openReceiptDialog(state) {
   for (const [supplier, quantity] of receipts) addReceiptRow(supplier, quantity);
   if (!receipts.size) addReceiptRow();
   $("#receipt-dialog").showModal();
-  $("#receipt-suppliers").querySelector("input:not([readonly])").focus();
+  $("#receipt-suppliers").querySelector("input").focus();
 }
 
 async function saveReceipt(event) {
@@ -435,9 +434,7 @@ async function saveReceipt(event) {
     }
     entries.set(supplier, quantity);
   }
-  const changes = [...entries].filter(([supplier, quantity]) => receipts.get(supplier) !== quantity)
-    .map(([supplier, quantity]) => ({ product_id: productId, supplier, quantity }));
-  if (!changes.length) {
+  if (entries.size === receipts.size && [...entries].every(([supplier, quantity]) => receipts.get(supplier) === quantity)) {
     $("#receipt-dialog").close();
     return;
   }
@@ -446,14 +443,20 @@ async function saveReceipt(event) {
   errorText.hidden = true;
   saveButton.textContent = "저장 중…";
   try {
-    const { error } = await supabaseClient.from("product_receipts").upsert(changes);
+    const { error } = await supabaseClient.rpc("save_product_receipts", {
+      target_product_id: productId,
+      expected_receipts: Object.fromEntries(receipts),
+      updated_receipts: Object.fromEntries(entries)
+    });
     if (error) throw error;
     adminReceipts.set(productId, entries);
     $("#receipt-dialog").close();
     renderCardDetails(state);
     state.card.querySelector('[data-action="edit-receipts"]')?.focus();
-  } catch {
-    errorText.textContent = "입고 요청 수량을 저장하지 못했습니다. 다시 시도해 주세요.";
+  } catch (error) {
+    errorText.textContent = error?.message === "product_receipts_changed"
+      ? "다른 곳에서 입고 요청이 변경되었습니다. 페이지를 새로고침한 뒤 다시 수정해 주세요."
+      : "입고 요청을 저장하지 못했습니다. 다시 시도해 주세요.";
     errorText.hidden = false;
   } finally {
     controls.forEach((control) => { control.disabled = false; });
